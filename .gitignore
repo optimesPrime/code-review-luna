@@ -3,3 +3,12 @@ __pycache__/
 *.egg-info/
 .env
 .DS_Store
+*.pyc
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+*.egg
