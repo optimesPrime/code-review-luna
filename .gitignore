@@ -1,0 +1,4 @@
+.cr-reports/
+__pycache__/
+*.egg-info/
+.env

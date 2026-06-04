@@ -1,0 +1,26 @@
+api:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  api_key_env: ANTHROPIC_API_KEY
+
+review:
+  language: zh
+  project_type: frontend
+  confirm_before_fix: true
+  max_diff_chars: 120000
+  apply_enabled: false
+
+skills: []
+
+reports:
+  output_dir: ./.cr-reports
+
+privacy:
+  ignore:
+    - .env
+    - .env.*
+    - node_modules/
+    - dist/
+  redact_patterns:
+    - "Bearer\\s+[A-Za-z0-9._-]+"
+    - "AKIA[0-9A-Z]{16}"
