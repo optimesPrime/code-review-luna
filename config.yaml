@@ -1,7 +1,7 @@
 api:
-  provider: anthropic
-  model: claude-sonnet-4-6
-  api_key_env: ANTHROPIC_API_KEY
+  provider: openai
+  model: gpt-4o
+  api_key_env: OPENAI_API_KEY
 
 review:
   language: zh
