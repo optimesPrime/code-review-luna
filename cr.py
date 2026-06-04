@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import click
+import yaml
 
 from config import load_config
 from diff_reader import get_diff, redact, DiffError
@@ -129,6 +130,71 @@ def run(staged, since, tests, phase, apply_mode, output, fmt, config_path):
     high_count = sum(1 for i in report.blast_radius_items if i.risk == "high")
     if high_count:
         click.echo(f"注意：发现 {high_count} 处高风险爆炸范围，请重点复审。")
+
+
+PROVIDERS = {
+    "claude": {
+        "provider": "anthropic",
+        "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "default_model": "claude-sonnet-4-6",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    },
+    "gpt": {
+        "provider": "openai",
+        "models": ["gpt-5.5", "gpt-4o", "gpt-4o-mini"],
+        "default_model": "gpt-5.5",
+        "api_key_env": "OPENAI_API_KEY",
+    },
+}
+
+
+@cli.command()
+@click.option("--config", "config_path", default="config.yaml")
+def switch(config_path):
+    """切换 AI 提供商（claude / gpt）"""
+    cfg_path = Path(config_path)
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+
+    current_provider = raw.get("api", {}).get("provider", "anthropic")
+    current_model = raw.get("api", {}).get("model", "")
+    current_base_url = raw.get("api", {}).get("base_url", "")
+    click.echo(f"当前配置：provider={current_provider}  model={current_model}")
+    click.echo("")
+
+    # 选择 provider
+    provider_choice = click.prompt(
+        "选择 provider",
+        type=click.Choice(["claude", "gpt"]),
+        default="claude" if current_provider == "anthropic" else "gpt",
+    )
+    info = PROVIDERS[provider_choice]
+
+    # 选择模型
+    model_list = "  /  ".join(info["models"])
+    click.echo(f"可用模型：{model_list}")
+    model = click.prompt("选择模型", default=info["default_model"])
+
+    # base_url（可选）
+    base_url = click.prompt(
+        "中转地址（无需代理可直接回车留空）",
+        default=current_base_url if current_provider == info["provider"] else "",
+    )
+
+    # 写入 config.yaml
+    if "api" not in raw:
+        raw["api"] = {}
+    raw["api"]["provider"] = info["provider"]
+    raw["api"]["model"] = model
+    raw["api"]["api_key_env"] = info["api_key_env"]
+    raw["api"]["base_url"] = base_url
+
+    cfg_path.write_text(yaml.dump(raw, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+
+    click.echo("")
+    click.echo(f"已切换：{provider_choice}  ({model})")
+    if base_url:
+        click.echo(f"中转地址：{base_url}")
+    click.echo(f"API Key 环境变量：{info['api_key_env']}")
 
 
 def main():
