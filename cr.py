@@ -17,6 +17,9 @@ from test_importer import parse_test_file, find_related_tests
 from reporter import ReviewReport, save
 
 
+DEFAULT_CONFIG = Path.home() / ".cr" / "config.yaml"
+
+
 @click.group()
 def cli():
     pass
@@ -31,10 +34,10 @@ def cli():
 @click.option("--output", default=None, help="自定义报告输出路径")
 @click.option("--format", "fmt", default="markdown",
               type=click.Choice(["markdown", "json"]))
-@click.option("--config", "config_path", default="config.yaml")
+@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.cr/config.yaml")
 def run(staged, since, tests, phase, apply_mode, output, fmt, config_path):
     """对当前 git 改动执行 AI 代码审查"""
-    cfg = load_config(config_path)
+    cfg = load_config(str(config_path or DEFAULT_CONFIG))
     if apply_mode:
         cfg.review.apply_enabled = True
 
@@ -149,10 +152,11 @@ PROVIDERS = {
 
 
 @cli.command()
-@click.option("--config", "config_path", default="config.yaml")
+@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.cr/config.yaml")
 def switch(config_path):
     """切换 AI 提供商（claude / gpt）"""
-    cfg_path = Path(config_path)
+    cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
 
     current_provider = raw.get("api", {}).get("provider", "anthropic")
