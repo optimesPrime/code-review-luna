@@ -23,6 +23,8 @@ cr = "cr:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--import-mode=importlib"
 
 [tool.setuptools]
 py-modules = ["cr", "config", "diff_reader", "skill_loader", "confirmer", "api_client", "reporter", "test_importer"]
