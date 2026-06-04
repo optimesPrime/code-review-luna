@@ -19,24 +19,41 @@ from reporter import ReviewReport, save
 
 DEFAULT_CONFIG = Path.home() / ".cr" / "config.yaml"
 
+PROVIDERS = {
+    "claude": {
+        "provider": "anthropic",
+        "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "default_model": "claude-sonnet-4-6",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    },
+    "gpt": {
+        "provider": "openai",
+        "models": ["gpt-5.5", "gpt-4o", "gpt-4o-mini"],
+        "default_model": "gpt-5.5",
+        "api_key_env": "OPENAI_API_KEY",
+    },
+}
 
-@click.group()
-def cli():
-    pass
 
-
-@cli.command()
+@click.group(invoke_without_command=True)
+@click.pass_context
 @click.option("--staged", is_flag=True, help="只审查已 git add 的内容")
 @click.option("--since", default=None, help="审查相对某个 ref 的改动，如 main")
 @click.option("--tests", default=None, help="测试文件或目录路径")
 @click.option("--phase", default=None, type=click.Choice(["blast", "quality"]))
 @click.option("--apply", "apply_mode", is_flag=True, help="开启可写入模式，仍需逐条确认")
 @click.option("--output", default=None, help="自定义报告输出路径")
-@click.option("--format", "fmt", default="markdown",
-              type=click.Choice(["markdown", "json"]))
+@click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "json"]))
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.cr/config.yaml")
-def run(staged, since, tests, phase, apply_mode, output, fmt, config_path):
-    """对当前 git 改动执行 AI 代码审查"""
+def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
+    """Luna — AI 代码审查工具
+
+    直接运行 `luna` 即可审查当前 git 改动。
+    使用 `luna switch` 切换 AI 提供商。
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
     cfg = load_config(str(config_path or DEFAULT_CONFIG))
     if apply_mode:
         cfg.review.apply_enabled = True
@@ -135,22 +152,6 @@ def run(staged, since, tests, phase, apply_mode, output, fmt, config_path):
         click.echo(f"注意：发现 {high_count} 处高风险爆炸范围，请重点复审。")
 
 
-PROVIDERS = {
-    "claude": {
-        "provider": "anthropic",
-        "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-        "default_model": "claude-sonnet-4-6",
-        "api_key_env": "ANTHROPIC_API_KEY",
-    },
-    "gpt": {
-        "provider": "openai",
-        "models": ["gpt-5.5", "gpt-4o", "gpt-4o-mini"],
-        "default_model": "gpt-5.5",
-        "api_key_env": "OPENAI_API_KEY",
-    },
-}
-
-
 @cli.command()
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.cr/config.yaml")
 def switch(config_path):
@@ -165,7 +166,6 @@ def switch(config_path):
     click.echo(f"当前配置：provider={current_provider}  model={current_model}")
     click.echo("")
 
-    # 选择 provider
     provider_choice = click.prompt(
         "选择 provider",
         type=click.Choice(["claude", "gpt"]),
@@ -173,18 +173,15 @@ def switch(config_path):
     )
     info = PROVIDERS[provider_choice]
 
-    # 选择模型
     model_list = "  /  ".join(info["models"])
     click.echo(f"可用模型：{model_list}")
     model = click.prompt("选择模型", default=info["default_model"])
 
-    # base_url（可选）
     base_url = click.prompt(
         "中转地址（无需代理可直接回车留空）",
         default=current_base_url if current_provider == info["provider"] else "",
     )
 
-    # 写入 config.yaml
     if "api" not in raw:
         raw["api"] = {}
     raw["api"]["provider"] = info["provider"]
