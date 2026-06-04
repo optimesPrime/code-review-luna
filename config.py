@@ -70,31 +70,27 @@ def load_config(path: str = "config.yaml") -> Config:
     cfg = Config()
 
     if api_raw := raw.get("api"):
-        cfg.api = APIConfig(
-            provider=api_raw.get("provider", "anthropic"),
-            model=api_raw.get("model", "claude-sonnet-4-6"),
-            api_key_env=api_raw.get("api_key_env", "ANTHROPIC_API_KEY"),
-        )
+        known = APIConfig.__dataclass_fields__.keys()
+        cfg.api = APIConfig(**{k: v for k, v in api_raw.items() if k in known})
 
     if r := raw.get("review"):
-        cfg.review = ReviewConfig(
-            language=r.get("language", "zh"),
-            project_type=r.get("project_type", "frontend"),
-            confirm_before_fix=r.get("confirm_before_fix", True),
-            max_diff_chars=r.get("max_diff_chars", 120_000),
-            apply_enabled=r.get("apply_enabled", False),
-        )
+        known = ReviewConfig.__dataclass_fields__.keys()
+        cfg.review = ReviewConfig(**{k: v for k, v in r.items() if k in known})
 
-    if skills_raw := raw.get("skills"):
-        cfg.skills = [SkillEntry(name=s["name"], path=s["path"]) for s in skills_raw]
+    if "skills" in raw:
+        skills_raw = raw["skills"] or []
+        cfg.skills = [
+            SkillEntry(name=s["name"], path=s["path"])
+            for s in skills_raw
+            if isinstance(s, dict) and "name" in s and "path" in s
+        ]
 
     if rep := raw.get("reports"):
-        cfg.reports = ReportsConfig(output_dir=rep.get("output_dir", "./.cr-reports"))
+        known = ReportsConfig.__dataclass_fields__.keys()
+        cfg.reports = ReportsConfig(**{k: v for k, v in rep.items() if k in known})
 
     if pv := raw.get("privacy"):
-        cfg.privacy = PrivacyConfig(
-            ignore=pv.get("ignore", cfg.privacy.ignore),
-            redact_patterns=pv.get("redact_patterns", cfg.privacy.redact_patterns),
-        )
+        known = PrivacyConfig.__dataclass_fields__.keys()
+        cfg.privacy = PrivacyConfig(**{k: v for k, v in pv.items() if k in known})
 
     return cfg
