@@ -13,7 +13,7 @@ from confirmer import ask
 import phases.blast_radius as blast
 import phases.code_quality as quality
 from test_importer import parse_test_file, find_related_tests
-from reporter import ReviewReport, save, render
+from reporter import ReviewReport, save
 
 
 @click.group()
