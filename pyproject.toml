@@ -19,7 +19,7 @@ dev = [
 ]
 
 [project.scripts]
-cr = "cr:main"
+luna = "cr:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
