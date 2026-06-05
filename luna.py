@@ -120,7 +120,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
             symbols,
             impact_paths,
             related_rules=[],
-            related_tests=[r.name for r in related_tests],
+            related_tests=[f"{r.describe}: {r.it}" for r in related_tests],
         )
 
         blast_items = blast.analyze(diff, skill_context, cfg, context_pack=context_pack)
