@@ -7,6 +7,7 @@ from typing import Optional
 
 from api_client import call_claude
 from config import Config
+from phases.context_pack import ContextPack
 
 
 @dataclass
@@ -24,12 +25,15 @@ class BlastRadiusItem:
 _SYSTEM_PROMPT = """\
 你是资深代码审查工程师，专注于分析代码改动的爆炸范围（Blast Radius）。
 
-任务：
-1. 分析 git diff 中的改动点（函数、组件、接口、导出等）
-2. 结合调用关系，评估每处受影响位置的风险
-3. 高风险低置信度的项目标注 needs_human_review=true
-
 {skill_context}
+
+你将收到一个结构化上下文包，包含：
+- changed_symbols: 改动的函数/组件符号
+- impact_paths: 影响链路，每条附有风险等级、置信度和证据
+- related_rules: 相关团队规则
+- review_focus: 重点审查方向
+
+基于上下文包中的证据链评估风险。高风险低置信度项标注 needs_human_review=true。
 
 以 JSON 数组输出，每个元素包含：
 - file: 受影响文件路径（字符串）
@@ -83,16 +87,27 @@ def find_usages_in_project(symbols: list[str], ignore_dirs: list[str]) -> str:
     return "\n".join(results)
 
 
-def analyze(diff: str, skill_context: str, config: Config) -> list[BlastRadiusItem]:
-    symbols = extract_changed_symbols(diff)
-    usages = find_usages_in_project(symbols, config.privacy.ignore)
+def analyze(
+    diff: str,
+    skill_context: str,
+    config: Config,
+    context_pack: "ContextPack | None" = None,
+) -> list[BlastRadiusItem]:
+    if context_pack is not None:
+        user = (
+            f"## 结构化上下文包\n\n"
+            f"```json\n{json.dumps(context_pack.to_dict(), ensure_ascii=False, indent=2)}\n```\n\n"
+            f"## Git Diff（参考）\n\n```diff\n{diff}\n```"
+        )
+    else:
+        symbols = extract_changed_symbols(diff)
+        usages = find_usages_in_project(symbols, config.privacy.ignore)
+        user = (
+            f"## Git Diff\n\n```diff\n{diff}\n```\n\n"
+            f"## 调用关系\n\n{usages or '（未找到外部调用）'}"
+        )
 
     system = _SYSTEM_PROMPT.format(skill_context=skill_context or "")
-    user = (
-        f"## Git Diff\n\n```diff\n{diff}\n```\n\n"
-        f"## 调用关系\n\n{usages or '（未找到外部调用）'}"
-    )
-
     raw = call_claude(system, user, config)
 
     match = re.search(r"\[.*\]", raw, re.DOTALL)
