@@ -172,7 +172,7 @@ def _collect_annotations(node, source):
                 if mod.type in ("marker_annotation", "annotation"):
                     name_node = mod.child_by_field_name("name")
                     if name_node:
-                        attrs.append(_text(name_node, source).split("(")[0])
+                        attrs.append(_text(name_node, source).split("(")[0].rsplit(".", 1)[-1])
     return attrs
 
 
