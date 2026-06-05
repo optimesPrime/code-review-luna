@@ -15,9 +15,13 @@ import phases.blast_radius as blast
 import phases.code_quality as quality
 from test_importer import parse_test_file, find_related_tests
 from reporter import ReviewReport, save
+from phases.symbol_locator import extract_changed_symbols_from_diff
+from phases.context_graph import build_graph, load_graph, save_graph
+from phases.risk_propagation import propagate_risk
+from phases.context_pack import build_context_pack
 
 
-DEFAULT_CONFIG = Path.home() / ".cr" / "config.yaml"
+DEFAULT_CONFIG = Path.home() / ".luna" / "config.yaml"
 
 PROVIDERS = {
     "claude": {
@@ -44,7 +48,7 @@ PROVIDERS = {
 @click.option("--apply", "apply_mode", is_flag=True, help="开启可写入模式，仍需逐条确认")
 @click.option("--output", default=None, help="自定义报告输出路径")
 @click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "json"]))
-@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.cr/config.yaml")
+@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
 def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
     """Luna — AI 代码审查工具
 
@@ -102,7 +106,24 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
 
     if phase in (None, "blast"):
         click.echo("\n[阶段1] 爆炸范围分析中...\n")
-        blast_items = blast.analyze(diff, skill_context, cfg)
+
+        cache_path = Path(".luna") / "cache" / "context-graph.json"
+        graph = load_graph(str(cache_path))
+        if graph is None:
+            click.echo("  构建代码关系图...", err=True)
+            graph = build_graph(".")
+            save_graph(graph, str(cache_path))
+
+        symbols = extract_changed_symbols_from_diff(diff, project_root=".")
+        impact_paths = propagate_risk(symbols, graph)
+        context_pack = build_context_pack(
+            symbols,
+            impact_paths,
+            related_rules=[],
+            related_tests=[r.name for r in related_tests],
+        )
+
+        blast_items = blast.analyze(diff, skill_context, cfg, context_pack=context_pack)
         report.blast_radius_items = blast_items
 
         for item in sorted(blast_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
@@ -153,7 +174,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
 
 
 @cli.command()
-@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.cr/config.yaml")
+@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
 def switch(config_path):
     """切换 AI 提供商（claude / gpt）"""
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG

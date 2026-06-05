@@ -12,3 +12,4 @@ venv/
 .coverage
 htmlcov/
 *.egg
+.luna/cache/
