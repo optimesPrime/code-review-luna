@@ -25,3 +25,13 @@ def should_run_backend_review(
     detected = detect_backend_languages_from_diff(diff)
     enabled = {lang.lower().replace("node.js", "nodejs").replace("c++", "cpp") for lang in languages}
     return any(language in enabled for language in detected)
+
+
+def get_adapter(language: str):
+    """Return the LanguageAdapter instance for the given language name.
+
+    Raises ValueError if no adapter is registered for that language.
+    Plans B and C add adapters for java, python, nodejs, go, php, cpp.
+    """
+    from phases.adapters import get_adapter as _get
+    return _get(language)
