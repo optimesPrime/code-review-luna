@@ -23,7 +23,7 @@ class APIConfig:
 @dataclass
 class ReviewConfig:
     language: str = "zh"
-    project_type: str = "frontend"
+    project_type: str = "auto"
     confirm_before_fix: bool = True
     max_diff_chars: int = 120_000
     apply_enabled: bool = False

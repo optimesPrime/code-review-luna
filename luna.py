@@ -48,6 +48,10 @@ PROVIDERS = {
 def _should_run_backend_review(diff: str, cfg) -> bool:
     if not cfg.backend.enabled:
         return False
+    if cfg.review.project_type == "auto":
+        from phases.backend_adapter_registry import detect_backend_languages_from_diff
+        enabled = {l.lower() for l in cfg.backend.languages}
+        return bool(set(detect_backend_languages_from_diff(diff)) & enabled)
     return should_run_backend_review(
         diff,
         project_type=cfg.review.project_type,

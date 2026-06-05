@@ -19,7 +19,7 @@ review:
   confirm_before_fix: true
   language: zh
   max_diff_chars: 120000
-  project_type: frontend
+  project_type: auto
 skills: []
 backend:
   enabled: true
