@@ -25,4 +25,10 @@ backend:
   enabled: true
   languages:
     - csharp
+    - java
+    - python
+    - nodejs
+    - go
+    - php
+    - cpp
   max_depth: 4

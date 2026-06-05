@@ -54,7 +54,7 @@ class PrivacyConfig:
 @dataclass
 class BackendConfig:
     enabled: bool = True
-    languages: list[str] = field(default_factory=lambda: ["csharp"])
+    languages: list[str] = field(default_factory=lambda: ["csharp", "java", "python", "nodejs", "go", "php", "cpp"])
     max_depth: int = 4
 
 

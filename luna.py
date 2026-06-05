@@ -45,6 +45,21 @@ PROVIDERS = {
 }
 
 
+_FRONTEND_EXTS = {".js", ".ts", ".jsx", ".tsx", ".vue", ".mjs", ".cjs"}
+
+
+def _has_frontend_files(diff: str) -> bool:
+    import re
+    exts = set(re.findall(r" b/[^ \n]+(\.[A-Za-z0-9]+)", diff))
+    return bool(exts & _FRONTEND_EXTS)
+
+
+def _should_run_frontend_pipeline(diff: str, cfg) -> bool:
+    if cfg.review.project_type == "auto":
+        return _has_frontend_files(diff)
+    return cfg.review.project_type in ("frontend", "fullstack")
+
+
 def _should_run_backend_review(diff: str, cfg) -> bool:
     if not cfg.backend.enabled:
         return False
@@ -161,21 +176,24 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
     if phase in (None, "blast"):
         click.echo("\n[阶段1] 爆炸范围分析中...\n")
 
-        cache_path = Path(".luna") / "cache" / "context-graph.json"
-        graph = load_graph(str(cache_path))
-        if graph is None:
-            click.echo("  构建代码关系图...", err=True)
-            graph = build_graph(".")
-            save_graph(graph, str(cache_path))
+        if _should_run_frontend_pipeline(diff, cfg):
+            cache_path = Path(".luna") / "cache" / "context-graph.json"
+            graph = load_graph(str(cache_path))
+            if graph is None:
+                click.echo("  构建代码关系图...", err=True)
+                graph = build_graph(".")
+                save_graph(graph, str(cache_path))
 
-        symbols = extract_changed_symbols_from_diff(diff, project_root=".")
-        impact_paths = propagate_risk(symbols, graph)
-        context_pack = build_context_pack(
-            symbols,
-            impact_paths,
-            related_rules=[],
-            related_tests=[f"{r.describe}: {r.it}" for r in related_tests],
-        )
+            symbols = extract_changed_symbols_from_diff(diff, project_root=".")
+            impact_paths = propagate_risk(symbols, graph)
+            context_pack = build_context_pack(
+                symbols,
+                impact_paths,
+                related_rules=[],
+                related_tests=[f"{r.describe}: {r.it}" for r in related_tests],
+            )
+        else:
+            context_pack = None
 
         blast_items = blast.analyze(diff, skill_context, cfg, context_pack=context_pack)
         report.blast_radius_items = blast_items
