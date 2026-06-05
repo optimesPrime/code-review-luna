@@ -19,11 +19,15 @@ from phases.symbol_locator import extract_changed_symbols_from_diff
 from phases.context_graph import build_graph, load_graph, save_graph
 from phases.risk_propagation import propagate_risk
 from phases.context_pack import build_context_pack
-from phases.csharp_symbol_locator import extract_csharp_changed_symbols_from_diff
-from phases.csharp_context_graph import build_csharp_backend_graph, save_backend_graph, load_backend_graph
+from phases.backend_graph_engine import (
+    find_symbols_from_diff as _engine_find_symbols,
+    build_graph as _engine_build_graph,
+    save_graph as _engine_save_graph,
+    load_graph as _engine_load_graph,
+)
 from phases.backend_risk_propagation import propagate_backend_risk
 from phases.backend_context_pack import build_backend_context_pack
-from phases.backend_adapter_registry import should_run_backend_review
+from phases.backend_adapter_registry import should_run_backend_review, get_adapter
 import phases.backend_review as backend_review
 
 
@@ -142,50 +146,50 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
     if phase in (None, "blast") and _should_run_backend_review(diff, cfg):
         click.echo("\n[后端] Backend Review Context Engine 分析中...\n")
         from phases.backend_adapter_registry import detect_backend_languages_from_diff as _detect
-        from phases.backend_generic_symbol_locator import extract_generic_backend_symbols_from_diff
         detected_langs = _detect(diff)
-        has_csharp = "csharp" in detected_langs
-        non_csharp = [l for l in detected_langs if l != "csharp"]
+        enabled = {l.lower() for l in cfg.backend.languages}
+        backend_symbols = []
+        backend_edges = []
 
-        # C# has a dedicated graph builder; other languages use generic locator (no graph yet)
-        if has_csharp:
-            backend_cache = Path(".luna") / "cache" / "backend-graph.json"
-            backend_graph = load_backend_graph(str(backend_cache))
-            if backend_graph is None:
-                click.echo("  构建后端代码关系图...", err=True)
-                backend_graph = build_csharp_backend_graph(".")
-                save_backend_graph(backend_graph, str(backend_cache))
-            backend_symbols = extract_csharp_changed_symbols_from_diff(diff, project_root=".")
-        else:
-            from phases.backend_models import BackendContextGraph
-            backend_graph = BackendContextGraph()
-            backend_symbols = extract_generic_backend_symbols_from_diff(
-                diff, project_root=".", languages=non_csharp
+        for lang in detected_langs:
+            if lang not in enabled:
+                continue
+            try:
+                adapter = get_adapter(lang)
+            except ValueError:
+                click.echo(f"  [跳过] {lang}: 适配器尚未实现", err=True)
+                continue
+
+            backend_cache = Path(".luna") / "cache" / f"{lang}-graph.json"
+            graph = _engine_load_graph(str(backend_cache))
+            if graph is None:
+                click.echo(f"  构建 {lang} 代码关系图...", err=True)
+                graph = _engine_build_graph(adapter, project_root=".")
+                _engine_save_graph(graph, str(backend_cache))
+
+            lang_symbols = _engine_find_symbols(diff, adapter, project_root=".")
+            backend_symbols.extend(lang_symbols)
+            backend_edges.extend(graph.edges)
+
+        if backend_symbols:
+            from phases.backend_models import BackendContextGraph as _BCG
+            combined_graph = _BCG()
+            for e in backend_edges:
+                combined_graph.add_edge(e)
+
+            backend_paths = propagate_backend_risk(
+                backend_symbols, combined_graph, max_depth=cfg.backend.max_depth
             )
-        backend_paths = propagate_backend_risk(
-            backend_symbols,
-            backend_graph,
-            max_depth=cfg.backend.max_depth,
-        )
-        backend_pack = build_backend_context_pack(
-            backend_symbols,
-            backend_graph.edges,
-            backend_paths,
-        )
-        backend_items = backend_review.analyze_backend(
-            backend_pack,
-            diff,
-            skill_context,
-            cfg,
-        )
-        report.backend_review_items = backend_items
+            backend_pack = build_backend_context_pack(backend_symbols, backend_edges, backend_paths)
+            backend_items = backend_review.analyze_backend(backend_pack, diff, skill_context, cfg)
+            report.backend_review_items = backend_items
 
-        for item in sorted(backend_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
-            note = " [需人工确认]" if item.needs_human_review else ""
-            click.echo(f"[后端·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
-            click.echo(f"  证据: {item.evidence}")
-            if item.suggestion and ask("  查看修复建议？"):
-                click.echo(f"  建议: {item.suggestion}")
+            for item in sorted(backend_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
+                note = " [需人工确认]" if item.needs_human_review else ""
+                click.echo(f"[后端·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
+                click.echo(f"  证据: {item.evidence}")
+                if item.suggestion and ask("  查看修复建议？"):
+                    click.echo(f"  建议: {item.suggestion}")
 
     if phase in (None, "blast"):
         click.echo("\n[阶段1] 爆炸范围分析中...\n")
