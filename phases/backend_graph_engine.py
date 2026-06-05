@@ -34,7 +34,10 @@ def find_symbols_from_diff(
         if not abs_path.exists():
             continue
 
-        root_node, source = _parse_file(abs_path, adapter)
+        try:
+            root_node, source = _parse_file(abs_path, adapter)
+        except Exception:
+            continue
 
         changed_lines = [
             ln
@@ -68,12 +71,14 @@ def build_graph(
         and not any(part in _SKIP_DIRS for part in p.relative_to(root).parts)
     ]
 
+    parse_cache: dict[Path, tuple[Any, bytes]] = {}
     for path in files:
         rel = str(path.relative_to(root))
         try:
             root_node, source = _parse_file(path, adapter)
-        except OSError:
+        except Exception:
             continue
+        parse_cache[path] = (root_node, source)
         nodes = adapter.extract_file_nodes(root_node, source, rel)
         for node in nodes:
             graph.add_node(node)
@@ -82,11 +87,10 @@ def build_graph(
             method_index.setdefault(short, node.id)
 
     for path in files:
-        rel = str(path.relative_to(root))
-        try:
-            root_node, source = _parse_file(path, adapter)
-        except OSError:
+        if path not in parse_cache:
             continue
+        rel = str(path.relative_to(root))
+        root_node, source = parse_cache[path]
         edges = adapter.extract_file_edges(root_node, source, rel, method_index)
         for edge in edges:
             graph.add_edge(edge)
@@ -125,15 +129,21 @@ def load_graph(path: str) -> BackendContextGraph | None:
         return None
     graph = BackendContextGraph()
     for nid, n in data.get("nodes", {}).items():
-        graph.add_node(BackendGraphNode(
-            id=n["id"], node_type=n["node_type"], file=n["file"],
-            name=n["name"], line=n.get("line", 0), attributes=n.get("attributes", []),
-        ))
+        try:
+            graph.add_node(BackendGraphNode(
+                id=n["id"], node_type=n["node_type"], file=n["file"],
+                name=n["name"], line=n.get("line", 0), attributes=n.get("attributes", []),
+            ))
+        except (KeyError, TypeError):
+            continue
     for e in data.get("edges", []):
-        graph.add_edge(BackendGraphEdge(
-            source=e["source"], target=e["target"], edge_type=e["edge_type"],
-            evidence=e["evidence"], confidence=e.get("confidence", "high"),
-        ))
+        try:
+            graph.add_edge(BackendGraphEdge(
+                source=e["source"], target=e["target"], edge_type=e["edge_type"],
+                evidence=e["evidence"], confidence=e.get("confidence", "high"),
+            ))
+        except (KeyError, TypeError):
+            continue
     return graph
 
 
