@@ -213,11 +213,12 @@ def _first_line(node: Any, source: bytes) -> str:
 
 
 def _find_all(node: Any, node_type: str) -> list:
-    results = []
-    if node.type == node_type:
-        results.append(node)
-    for child in node.children:
-        results.extend(_find_all(child, node_type))
+    results, stack = [], [node]
+    while stack:
+        n = stack.pop()
+        if n.type == node_type:
+            results.append(n)
+        stack.extend(n.children)
     return results
 
 
