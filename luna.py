@@ -141,13 +141,27 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
 
     if phase in (None, "blast") and _should_run_backend_review(diff, cfg):
         click.echo("\n[后端] Backend Review Context Engine 分析中...\n")
-        backend_cache = Path(".luna") / "cache" / "backend-graph.json"
-        backend_graph = load_backend_graph(str(backend_cache))
-        if backend_graph is None:
-            click.echo("  构建后端代码关系图...", err=True)
-            backend_graph = build_csharp_backend_graph(".")
-            save_backend_graph(backend_graph, str(backend_cache))
-        backend_symbols = extract_csharp_changed_symbols_from_diff(diff, project_root=".")
+        from phases.backend_adapter_registry import detect_backend_languages_from_diff as _detect
+        from phases.backend_generic_symbol_locator import extract_generic_backend_symbols_from_diff
+        detected_langs = _detect(diff)
+        has_csharp = "csharp" in detected_langs
+        non_csharp = [l for l in detected_langs if l != "csharp"]
+
+        # C# has a dedicated graph builder; other languages use generic locator (no graph yet)
+        if has_csharp:
+            backend_cache = Path(".luna") / "cache" / "backend-graph.json"
+            backend_graph = load_backend_graph(str(backend_cache))
+            if backend_graph is None:
+                click.echo("  构建后端代码关系图...", err=True)
+                backend_graph = build_csharp_backend_graph(".")
+                save_backend_graph(backend_graph, str(backend_cache))
+            backend_symbols = extract_csharp_changed_symbols_from_diff(diff, project_root=".")
+        else:
+            from phases.backend_models import BackendContextGraph
+            backend_graph = BackendContextGraph()
+            backend_symbols = extract_generic_backend_symbols_from_diff(
+                diff, project_root=".", languages=non_csharp
+            )
         backend_paths = propagate_backend_risk(
             backend_symbols,
             backend_graph,
