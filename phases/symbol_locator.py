@@ -1,6 +1,7 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 @dataclass
 class DiffHunk:
@@ -71,6 +72,35 @@ def locate_symbols(file_path: str, changed_lines: list[int]) -> list[ChangedSymb
             else:
                 continue
             break  # Found a symbol for this changed_line; move to next
+
+    return symbols
+
+
+def extract_changed_symbols_from_diff(
+    diff: str,
+    project_root: str = ".",
+) -> list[ChangedSymbol]:
+    root = Path(project_root)
+    symbols: list[ChangedSymbol] = []
+
+    for diff_file in parse_diff(diff):
+        abs_path = root / diff_file.path
+        if not abs_path.exists():
+            continue
+
+        changed_lines: list[int] = []
+        for hunk in diff_file.hunks:
+            for ln in range(hunk.start_line, hunk.start_line + hunk.line_count):
+                changed_lines.append(ln)
+
+        file_symbols = locate_symbols(str(abs_path), changed_lines)
+
+        change_type = "added" if diff_file.is_new_file else "modified"
+        for s in file_symbols:
+            s.change_type = change_type
+            s.file = diff_file.path  # normalize to project-relative path
+
+        symbols.extend(file_symbols)
 
     return symbols
 

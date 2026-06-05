@@ -1,6 +1,6 @@
 import os
 import tempfile
-from phases.symbol_locator import parse_diff, DiffFile, DiffHunk, locate_symbols, ChangedSymbol
+from phases.symbol_locator import parse_diff, DiffFile, DiffHunk, locate_symbols, ChangedSymbol, extract_changed_symbols_from_diff
 
 MODIFY_DIFF = """\
 diff --git a/src/stores/user.js b/src/stores/user.js
@@ -139,4 +139,68 @@ def test_locate_top_level_export_function():
 
 def test_locate_symbols_returns_empty_for_missing_file():
     symbols = locate_symbols("/nonexistent/path.js", changed_lines=[1])
+    assert symbols == []
+
+
+def test_extract_finds_modified_function_body():
+    """
+    Key regression test: a diff that only MODIFIES lines *inside* an existing
+    function must still surface that function — the current grep-only approach
+    would miss this entirely.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = os.path.join(tmp, "stores", "user.js")
+        os.makedirs(os.path.dirname(src_path), exist_ok=True)
+        with open(src_path, "w") as f:
+            f.write(JS_SOURCE)
+
+        rel = "stores/user.js"
+        diff = f"""\
+diff --git a/{rel} b/{rel}
+index 1..2 100644
+--- a/{rel}
++++ b/{rel}
+@@ -7,2 +7,3 @@ export const useUserStore = defineStore('user', () => {{
+-  tradeUserId.value = id
++  tradeUserId.value = String(id)
++  sessionStorage.setItem('tradeId', String(id))
+"""
+        symbols = extract_changed_symbols_from_diff(diff, project_root=tmp)
+        names = [s.symbol for s in symbols]
+        assert "setTradeUserId" in names, f"Expected setTradeUserId, got: {names}"
+
+
+def test_extract_marks_new_file_symbols_as_added():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = os.path.join(tmp, "utils", "format.js")
+        os.makedirs(os.path.dirname(src_path), exist_ok=True)
+        with open(src_path, "w") as f:
+            f.write("export function formatDate(d) {\n  return d.toISOString()\n}\n")
+
+        diff = """\
+diff --git a/utils/format.js b/utils/format.js
+new file mode 100644
+--- /dev/null
++++ b/utils/format.js
+@@ -0,0 +1,3 @@
++export function formatDate(d) {
++  return d.toISOString()
++}
+"""
+        symbols = extract_changed_symbols_from_diff(diff, project_root=tmp)
+        match = next((s for s in symbols if s.symbol == "formatDate"), None)
+        assert match is not None
+        assert match.change_type == "added"
+
+
+def test_extract_returns_empty_when_file_not_on_disk():
+    diff = """\
+diff --git a/ghost.js b/ghost.js
+index 1..2 100644
+--- a/ghost.js
++++ b/ghost.js
+@@ -1,1 +1,2 @@
++const x = 1
+"""
+    symbols = extract_changed_symbols_from_diff(diff, project_root="/nonexistent")
     assert symbols == []
