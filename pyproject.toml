@@ -3,13 +3,16 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "code-reviewer"
+name = "luna"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
     "anthropic>=0.28",
     "pyyaml>=6.0",
+    "openai>=1.0",
+    "tree-sitter>=0.23",
+    "tree-sitter-c-sharp>=0.23",
 ]
 
 [project.optional-dependencies]
@@ -19,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-luna = "cr:main"
+luna = "luna:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -27,5 +30,5 @@ pythonpath = ["."]
 addopts = "--import-mode=importlib"
 
 [tool.setuptools]
-py-modules = ["cr", "config", "diff_reader", "skill_loader", "confirmer", "api_client", "reporter", "test_importer"]
-packages = ["phases"]
+py-modules = ["luna", "config", "diff_reader", "skill_loader", "confirmer", "api_client", "reporter", "test_importer"]
+packages = ["phases", "phases.adapters"]
