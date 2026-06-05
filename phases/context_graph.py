@@ -1,5 +1,6 @@
 # phases/context_graph.py
 from __future__ import annotations
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,6 +84,48 @@ def build_graph(project_root: str) -> ContextGraph:
                 if resolved:
                     graph.edges.append(GraphEdge(source=rel, target=resolved, edge_type="imports"))
                     graph._importers.setdefault(resolved, set()).add(rel)
+
+    return graph
+
+
+def save_graph(graph: ContextGraph, path: str) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "nodes": {
+            nid: {"id": n.id, "node_type": n.node_type, "file": n.file,
+                  "name": n.name, "line": n.line}
+            for nid, n in graph.nodes.items()
+        },
+        "edges": [
+            {"source": e.source, "target": e.target, "edge_type": e.edge_type}
+            for e in graph.edges
+        ],
+        "importers": {k: list(v) for k, v in graph._importers.items()},
+    }
+    Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_graph(path: str) -> ContextGraph | None:
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    graph = ContextGraph()
+    for nid, n in data.get("nodes", {}).items():
+        graph.nodes[nid] = GraphNode(
+            id=n["id"], node_type=n["node_type"],
+            file=n["file"], name=n["name"], line=n.get("line", 0),
+        )
+    for e in data.get("edges", []):
+        graph.edges.append(GraphEdge(
+            source=e["source"], target=e["target"], edge_type=e["edge_type"]
+        ))
+    for k, v in data.get("importers", {}).items():
+        graph._importers[k] = set(v)
 
     return graph
 

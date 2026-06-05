@@ -1,7 +1,7 @@
 # tests/test_context_graph.py
 import tempfile
 from pathlib import Path
-from phases.context_graph import build_graph
+from phases.context_graph import build_graph, save_graph, load_graph
 
 
 def _make_files(tmp_dir: str, files: dict[str, str]) -> None:
@@ -65,3 +65,39 @@ def test_graph_resolves_ts_extension():
             e.source == "src/a.ts" and e.target == "src/b.ts"
             for e in graph.edges
         )
+
+
+def test_save_and_load_roundtrip():
+    with tempfile.TemporaryDirectory() as d:
+        _make_files(d, {
+            "src/a.js": "import { foo } from './b'\n",
+            "src/b.js": "export function foo() {}\n",
+        })
+        graph = build_graph(d)
+        cache_path = Path(d) / "graph.json"
+        save_graph(graph, str(cache_path))
+
+        loaded = load_graph(str(cache_path))
+        assert loaded is not None
+        assert set(loaded.nodes.keys()) == set(graph.nodes.keys())
+        assert len(loaded.edges) == len(graph.edges)
+
+
+def test_load_graph_returns_none_for_missing_file():
+    result = load_graph("/nonexistent/path.json")
+    assert result is None
+
+
+def test_loaded_graph_preserves_importers():
+    with tempfile.TemporaryDirectory() as d:
+        _make_files(d, {
+            "src/a.js": "import { foo } from './b'\n",
+            "src/b.js": "export function foo() {}\n",
+        })
+        graph = build_graph(d)
+        cache_path = Path(d) / "graph.json"
+        save_graph(graph, str(cache_path))
+
+        loaded = load_graph(str(cache_path))
+        assert loaded is not None
+        assert "src/a.js" in loaded.find_usages("src/b.js")
