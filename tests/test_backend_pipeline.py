@@ -1,8 +1,8 @@
 # tests/test_backend_pipeline.py
 from pathlib import Path
 
-from phases.csharp_symbol_locator import extract_csharp_changed_symbols_from_diff
-from phases.csharp_context_graph import build_csharp_backend_graph
+from phases.backend_graph_engine import find_symbols_from_diff, build_graph
+from phases.adapters.csharp_adapter import CSHARP_ADAPTER
 from phases.backend_risk_propagation import propagate_backend_risk
 from phases.backend_context_pack import build_backend_context_pack
 
@@ -49,8 +49,8 @@ index aaa..bbb 100644
      }
 """
 
-    symbols = extract_csharp_changed_symbols_from_diff(diff, project_root=str(tmp_path))
-    graph = build_csharp_backend_graph(str(tmp_path))
+    symbols = find_symbols_from_diff(diff, CSHARP_ADAPTER, project_root=str(tmp_path))
+    graph = build_graph(CSHARP_ADAPTER, project_root=str(tmp_path))
     paths = propagate_backend_risk(symbols, graph)
     pack = build_backend_context_pack(symbols, graph.edges, paths)
     data = pack.to_dict()
