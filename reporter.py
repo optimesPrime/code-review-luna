@@ -4,6 +4,7 @@ from pathlib import Path
 from phases.blast_radius import BlastRadiusItem
 from phases.code_quality import CodeQualityItem
 from test_importer import TestCase
+from phases.backend_models import BackendReviewItem
 
 
 @dataclass
@@ -13,9 +14,27 @@ class ReviewReport:
     blast_radius_items: list[BlastRadiusItem] = field(default_factory=list)
     code_quality_items: list[CodeQualityItem] = field(default_factory=list)
     related_tests: list[TestCase] = field(default_factory=list)
+    backend_review_items: list[BackendReviewItem] = field(default_factory=list)
     skill_errors: list = field(default_factory=list)
     applied_fixes: list[str] = field(default_factory=list)
     skipped_items: list[str] = field(default_factory=list)
+
+
+def _backend_section(items: list[BackendReviewItem]) -> str:
+    if not items:
+        return "_未发现后端专项风险_"
+    risk_order = {"high": 0, "medium": 1, "low": 2}
+    lines = []
+    for item in sorted(items, key=lambda x: risk_order.get(x.risk, 9)):
+        note = " *(需人工确认)*" if item.needs_human_review else ""
+        lines.append(
+            f"### `{item.symbol}` -> `{item.file}:{item.line}`\n"
+            f"- 分类: {item.category} | 风险: **{item.risk}** | 置信度: {item.confidence}{note}\n"
+            f"- 原因: {item.reason}\n"
+            f"- 证据: {item.evidence}\n"
+            + (f"- 建议: {item.suggestion}\n" if item.suggestion else "")
+        )
+    return "\n".join(lines)
 
 
 def _blast_section(items: list[BlastRadiusItem]) -> str:
@@ -64,19 +83,23 @@ def render(report: ReviewReport) -> str:
 
 {report.diff_summary}
 
-## 二、爆炸范围分析
+## 二、后端审查
+
+{_backend_section(report.backend_review_items)}
+
+## 三、爆炸范围分析
 
 {_blast_section(report.blast_radius_items)}
 
-## 三、代码质量问题
+## 四、代码质量问题
 
 {_quality_section(report.code_quality_items)}
 
-## 四、关联测试用例
+## 五、关联测试用例
 
 {_tests_section(report.related_tests)}
 
-## 五、审查结论
+## 六、审查结论
 
 > 由人工复审填写
 

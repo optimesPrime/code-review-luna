@@ -10,6 +10,7 @@ class APIConfig:
     provider: str = "anthropic"
     model: str = "claude-sonnet-4-6"
     api_key_env: str = "ANTHROPIC_API_KEY"
+    base_url: str = ""
 
     @property
     def api_key(self) -> str:
@@ -36,7 +37,7 @@ class SkillEntry:
 
 @dataclass
 class ReportsConfig:
-    output_dir: str = "./.cr-reports"
+    output_dir: str = "./.luna-reports"
 
 
 @dataclass
@@ -51,12 +52,20 @@ class PrivacyConfig:
 
 
 @dataclass
+class BackendConfig:
+    enabled: bool = True
+    languages: list[str] = field(default_factory=lambda: ["csharp"])
+    max_depth: int = 4
+
+
+@dataclass
 class Config:
     api: APIConfig = field(default_factory=APIConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     skills: list[SkillEntry] = field(default_factory=list)
     reports: ReportsConfig = field(default_factory=ReportsConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
+    backend: BackendConfig = field(default_factory=BackendConfig)
 
 
 def load_config(path: str = "config.yaml") -> Config:
@@ -92,5 +101,9 @@ def load_config(path: str = "config.yaml") -> Config:
     if pv := raw.get("privacy"):
         known = PrivacyConfig.__dataclass_fields__.keys()
         cfg.privacy = PrivacyConfig(**{k: v for k, v in pv.items() if k in known})
+
+    if b := raw.get("backend"):
+        known = BackendConfig.__dataclass_fields__.keys()
+        cfg.backend = BackendConfig(**{k: v for k, v in b.items() if k in known})
 
     return cfg

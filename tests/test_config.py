@@ -55,3 +55,29 @@ def test_privacy_redact_patterns(tmp_path):
     }))
     cfg = load_config(str(f))
     assert "SECRET\\d+" in cfg.privacy.redact_patterns
+
+
+def test_backend_config_loaded(tmp_path):
+    f = tmp_path / "config.yaml"
+    f.write_text("""
+review:
+  project_type: backend
+backend:
+  languages:
+    - csharp
+    - java
+    - python
+    - nodejs
+    - go
+    - php
+    - cpp
+  enabled: true
+  max_depth: 4
+""", encoding="utf-8")
+
+    cfg = load_config(str(f))
+
+    assert cfg.review.project_type == "backend"
+    assert cfg.backend.enabled is True
+    assert cfg.backend.languages == ["csharp", "java", "python", "nodejs", "go", "php", "cpp"]
+    assert cfg.backend.max_depth == 4

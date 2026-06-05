@@ -19,6 +19,12 @@ from phases.symbol_locator import extract_changed_symbols_from_diff
 from phases.context_graph import build_graph, load_graph, save_graph
 from phases.risk_propagation import propagate_risk
 from phases.context_pack import build_context_pack
+from phases.csharp_symbol_locator import extract_csharp_changed_symbols_from_diff
+from phases.csharp_context_graph import build_csharp_backend_graph, save_backend_graph, load_backend_graph
+from phases.backend_risk_propagation import propagate_backend_risk
+from phases.backend_context_pack import build_backend_context_pack
+from phases.backend_adapter_registry import should_run_backend_review
+import phases.backend_review as backend_review
 
 
 DEFAULT_CONFIG = Path.home() / ".luna" / "config.yaml"
@@ -37,6 +43,16 @@ PROVIDERS = {
         "api_key_env": "OPENAI_API_KEY",
     },
 }
+
+
+def _should_run_backend_review(diff: str, cfg) -> bool:
+    if not cfg.backend.enabled:
+        return False
+    return should_run_backend_review(
+        diff,
+        project_type=cfg.review.project_type,
+        languages=cfg.backend.languages,
+    )
 
 
 @click.group(invoke_without_command=True)
@@ -103,6 +119,40 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
         skill_errors=skill_errors,
         related_tests=related_tests,
     )
+
+    if phase in (None, "blast") and _should_run_backend_review(diff, cfg):
+        click.echo("\n[后端] Backend Review Context Engine 分析中...\n")
+        backend_cache = Path(".luna") / "cache" / "backend-graph.json"
+        backend_graph = load_backend_graph(str(backend_cache))
+        if backend_graph is None:
+            click.echo("  构建后端代码关系图...", err=True)
+            backend_graph = build_csharp_backend_graph(".")
+            save_backend_graph(backend_graph, str(backend_cache))
+        backend_symbols = extract_csharp_changed_symbols_from_diff(diff, project_root=".")
+        backend_paths = propagate_backend_risk(
+            backend_symbols,
+            backend_graph,
+            max_depth=cfg.backend.max_depth,
+        )
+        backend_pack = build_backend_context_pack(
+            backend_symbols,
+            backend_graph.edges,
+            backend_paths,
+        )
+        backend_items = backend_review.analyze_backend(
+            backend_pack,
+            diff,
+            skill_context,
+            cfg,
+        )
+        report.backend_review_items = backend_items
+
+        for item in sorted(backend_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
+            note = " [需人工确认]" if item.needs_human_review else ""
+            click.echo(f"[后端·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
+            click.echo(f"  证据: {item.evidence}")
+            if item.suggestion and ask("  查看修复建议？"):
+                click.echo(f"  建议: {item.suggestion}")
 
     if phase in (None, "blast"):
         click.echo("\n[阶段1] 爆炸范围分析中...\n")

@@ -56,3 +56,31 @@ def test_save_writes_file(tmp_path):
 def test_save_creates_nested_dir(tmp_path):
     path = save(make_report(), str(tmp_path / "nested" / "reports"))
     assert Path(path).exists()
+
+
+from phases.backend_models import BackendReviewItem
+
+
+def test_render_with_backend_review_items():
+    from reporter import render, ReviewReport
+    items = [BackendReviewItem(
+        file="Controllers/OrderController.cs",
+        line=12,
+        symbol="Submit",
+        risk="high",
+        confidence="high",
+        category="controller",
+        reason="接口入口缺少失败分支处理",
+        evidence="OrderService.Submit result returned as Ok",
+        suggestion="检查失败结果并返回合适状态码",
+    )]
+    report = ReviewReport(
+        timestamp="2026-06-05 10:00",
+        diff_summary="共 5 行改动",
+        backend_review_items=items,
+    )
+    md = render(report)
+
+    assert "后端审查" in md
+    assert "OrderController.cs" in md
+    assert "接口入口缺少失败分支处理" in md
