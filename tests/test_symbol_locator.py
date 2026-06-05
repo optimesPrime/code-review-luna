@@ -1,4 +1,6 @@
-from phases.symbol_locator import parse_diff, DiffFile, DiffHunk
+import os
+import tempfile
+from phases.symbol_locator import parse_diff, DiffFile, DiffHunk, locate_symbols, ChangedSymbol
 
 MODIFY_DIFF = """\
 diff --git a/src/stores/user.js b/src/stores/user.js
@@ -70,3 +72,71 @@ deleted file mode 100644
 """
     files = parse_diff(diff)
     assert files[0].is_deleted is True
+
+
+def test_parse_diff_single_line_hunk():
+    diff = "diff --git a/x.js b/x.js\nindex 1..2\n--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n changed\n"
+    files = parse_diff(diff)
+    assert files[0].hunks[0].line_count == 1
+
+
+JS_SOURCE = """\
+import { ref } from 'vue'
+
+export const useUserStore = defineStore('user', () => {
+  const tradeUserId = ref(null)
+
+  function setTradeUserId(id) {
+    tradeUserId.value = id
+    return id
+  }
+
+  async function refreshAccount() {
+    const res = await fetch('/api/account')
+    tradeUserId.value = res.userId
+  }
+
+  return { tradeUserId, setTradeUserId, refreshAccount }
+})
+"""
+
+
+def test_locate_symbol_for_modified_line():
+    with tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False) as f:
+        f.write(JS_SOURCE)
+        path = f.name
+    try:
+        # Lines 7–8 are inside setTradeUserId
+        symbols = locate_symbols(path, changed_lines=[7, 8])
+        assert any(s.symbol == "setTradeUserId" for s in symbols)
+    finally:
+        os.unlink(path)
+
+
+def test_locate_symbol_type_is_function():
+    with tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False) as f:
+        f.write(JS_SOURCE)
+        path = f.name
+    try:
+        symbols = locate_symbols(path, changed_lines=[7])
+        match = next(s for s in symbols if s.symbol == "setTradeUserId")
+        assert match.symbol_type == "function"
+    finally:
+        os.unlink(path)
+
+
+def test_locate_top_level_export_function():
+    source = "export function formatDate(d) {\n  return d.toISOString()\n}\n"
+    with tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False) as f:
+        f.write(source)
+        path = f.name
+    try:
+        symbols = locate_symbols(path, changed_lines=[2])
+        assert any(s.symbol == "formatDate" for s in symbols)
+    finally:
+        os.unlink(path)
+
+
+def test_locate_symbols_returns_empty_for_missing_file():
+    symbols = locate_symbols("/nonexistent/path.js", changed_lines=[1])
+    assert symbols == []
