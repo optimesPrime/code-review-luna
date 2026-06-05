@@ -53,3 +53,31 @@ def test_backend_context_pack_to_dict_contains_evidence():
     assert data["impact_paths"][0]["risk"] == "high"
     assert data["uncertain_edges"][0]["confidence"] == "medium"
     assert "检查接口入口" in data["review_focus"][0]
+
+
+from phases.backend_context_pack import build_backend_context_pack
+
+
+def test_build_backend_pack_generates_review_focus():
+    symbol = BackendChangedSymbol(
+        file="Controllers/OrderController.cs",
+        symbol="Submit",
+        symbol_type="controller_action",
+        class_name="OrderController",
+        start_line=12,
+        change_type="modified",
+        attributes=["HttpPost"],
+        evidence="public IActionResult Submit(...)",
+    )
+    impact = BackendImpactPath(
+        path=["Controllers/OrderController.cs:OrderController.Submit"],
+        risk="high",
+        confidence="high",
+        evidence="controller action changed",
+        rule_hits=["controller_action_changed"],
+    )
+
+    pack = build_backend_context_pack([symbol], [], [impact])
+
+    assert "controller_action_changed" in pack.risk_rules_hit
+    assert any("Controller" in focus or "接口" in focus for focus in pack.review_focus)
