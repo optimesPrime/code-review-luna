@@ -1,6 +1,7 @@
 # tests/test_csharp_symbol_locator.py
 from pathlib import Path
-from phases.csharp_symbol_locator import extract_csharp_changed_symbols_from_diff
+from phases.adapters.csharp_adapter import CSHARP_ADAPTER
+from phases.backend_graph_engine import find_symbols_from_diff
 
 
 CSPROJ_DIFF = """\
@@ -38,7 +39,7 @@ def test_extracts_changed_controller_action(tmp_path: Path):
         encoding="utf-8",
     )
 
-    symbols = extract_csharp_changed_symbols_from_diff(CSPROJ_DIFF, project_root=str(tmp_path))
+    symbols = find_symbols_from_diff(CSPROJ_DIFF, CSHARP_ADAPTER, project_root=str(tmp_path))
 
     assert len(symbols) == 1
     assert symbols[0].file == "Controllers/OrderController.cs"
@@ -69,7 +70,7 @@ index aaa..bbb 100644
         encoding="utf-8",
     )
 
-    symbols = extract_csharp_changed_symbols_from_diff(diff, project_root=str(tmp_path))
+    symbols = find_symbols_from_diff(diff, CSHARP_ADAPTER, project_root=str(tmp_path))
 
     assert symbols[0].symbol == "Amount"
     assert symbols[0].symbol_type == "model_property"

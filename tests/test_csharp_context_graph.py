@@ -1,7 +1,7 @@
 # tests/test_csharp_context_graph.py
-import json
 from pathlib import Path
-from phases.csharp_context_graph import build_csharp_backend_graph, save_backend_graph, load_backend_graph
+from phases.adapters.csharp_adapter import CSHARP_ADAPTER
+from phases.backend_graph_engine import build_graph, save_graph, load_graph
 
 
 def test_builds_controller_to_service_edge(tmp_path: Path):
@@ -34,7 +34,7 @@ def test_builds_controller_to_service_edge(tmp_path: Path):
         encoding="utf-8",
     )
 
-    graph = build_csharp_backend_graph(str(tmp_path))
+    graph = build_graph(CSHARP_ADAPTER, project_root=str(tmp_path))
 
     assert "Controllers/OrderController.cs:OrderController.Submit" in graph.nodes
     assert "Services/OrderService.cs:OrderService.Submit" in graph.nodes
@@ -59,12 +59,12 @@ def test_marks_authorize_attribute_as_auth_edge(tmp_path: Path):
         encoding="utf-8",
     )
 
-    graph = build_csharp_backend_graph(str(tmp_path))
+    graph = build_graph(CSHARP_ADAPTER, project_root=str(tmp_path))
 
     assert any(e.edge_type == "requires_auth" for e in graph.edges)
 
 
-def test_save_and_load_backend_graph_roundtrip(tmp_path: Path):
+def test_save_and_load_graph_roundtrip(tmp_path: Path):
     controller = tmp_path / "Controllers" / "OrderController.cs"
     controller.parent.mkdir()
     controller.write_text(
@@ -75,15 +75,15 @@ def test_save_and_load_backend_graph_roundtrip(tmp_path: Path):
         "}\n",
         encoding="utf-8",
     )
-    graph = build_csharp_backend_graph(str(tmp_path))
+    graph = build_graph(CSHARP_ADAPTER, project_root=str(tmp_path))
     cache = tmp_path / "graph.json"
-    save_backend_graph(graph, str(cache))
+    save_graph(graph, str(cache))
 
-    loaded = load_backend_graph(str(cache))
+    loaded = load_graph(str(cache))
     assert loaded is not None
     assert set(loaded.nodes.keys()) == set(graph.nodes.keys())
     assert len(loaded.edges) == len(graph.edges)
 
 
-def test_load_backend_graph_returns_none_for_missing():
-    assert load_backend_graph("/nonexistent/graph.json") is None
+def test_load_graph_returns_none_for_missing():
+    assert load_graph("/nonexistent/graph.json") is None

@@ -24,7 +24,14 @@ class CSharpAdapter:
     ) -> BackendChangedSymbol | None:
         target_line = line - 1  # tree-sitter is 0-based
 
-        point = (target_line, 0)
+        # Use first non-whitespace column so indented members (e.g. properties)
+        # are found correctly; col 0 only hits the parent declaration_list.
+        lines = source.decode("utf-8", errors="ignore").split("\n")
+        raw_line = lines[target_line] if target_line < len(lines) else ""
+        col = len(raw_line) - len(raw_line.lstrip())
+        if col >= len(raw_line):  # blank / whitespace-only line
+            col = 0
+        point = (target_line, col)
         leaf = root_node.descendant_for_point_range(point, point)
         if leaf is None:
             return None
