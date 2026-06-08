@@ -204,3 +204,118 @@ index 1..2 100644
 """
     symbols = extract_changed_symbols_from_diff(diff, project_root="/nonexistent")
     assert symbols == []
+
+
+# ── tree-sitter AST tests ─────────────────────────────────────────────────────
+from pathlib import Path as _Path
+
+
+def _write_file(path: _Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+REACT_SRC = """\
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+
+export function OrderList({ userId }) {
+  const [orders, setOrders] = useState([]);
+  useEffect(() => {
+    axios.get('/api/orders/' + userId).then(r => setOrders(r.data));
+  }, [userId]);
+  return orders;
+}
+
+export const OrderCard = ({ order }) => (
+  <div>{order.name}</div>
+);
+
+export function useOrderData(id) {
+  const [data, setData] = useState(null);
+  return data;
+}
+
+const useAuth = () => {
+  return { user: null };
+};
+
+export const useOrderStore = defineStore('orders', () => {
+  const items = [];
+  return { items };
+});
+"""
+
+VUE_SFC = """\
+<template>
+  <div>{{ count }}</div>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue';
+const count = ref(0);
+
+function increment() {
+  count.value++;
+}
+
+const useCounter = () => {
+  return count;
+};
+</script>
+"""
+
+
+def test_locate_symbols_react_function_component(tmp_path):
+    f = tmp_path / "orders.tsx"
+    _write_file(f, REACT_SRC)
+    from phases.symbol_locator import locate_symbols
+    # Line 5 is inside OrderList body
+    symbols = locate_symbols(str(f), [5])
+    assert len(symbols) == 1
+    assert symbols[0].symbol == "OrderList"
+    assert symbols[0].symbol_type == "component"
+
+
+def test_locate_symbols_react_hook(tmp_path):
+    f = tmp_path / "orders.tsx"
+    _write_file(f, REACT_SRC)
+    from phases.symbol_locator import locate_symbols
+    # Line 17 is inside useOrderData body
+    symbols = locate_symbols(str(f), [17])
+    assert len(symbols) == 1
+    assert symbols[0].symbol == "useOrderData"
+    assert symbols[0].symbol_type == "hook"
+
+
+def test_locate_symbols_store(tmp_path):
+    f = tmp_path / "orders.tsx"
+    _write_file(f, REACT_SRC)
+    from phases.symbol_locator import locate_symbols
+    # Line 26 is inside useOrderStore body
+    symbols = locate_symbols(str(f), [26])
+    assert len(symbols) == 1
+    assert symbols[0].symbol == "useOrderStore"
+    assert symbols[0].symbol_type == "store"
+
+
+def test_locate_symbols_vue_sfc_function(tmp_path):
+    f = tmp_path / "Counter.vue"
+    _write_file(f, VUE_SFC)
+    from phases.symbol_locator import locate_symbols
+    # Line 10 is inside increment() in <script setup>
+    symbols = locate_symbols(str(f), [10])
+    assert len(symbols) == 1
+    assert symbols[0].symbol == "increment"
+    assert symbols[0].symbol_type == "function"
+
+
+def test_locate_symbols_vue_sfc_composable(tmp_path):
+    f = tmp_path / "Counter.vue"
+    _write_file(f, VUE_SFC)
+    from phases.symbol_locator import locate_symbols
+    # Line 14 is inside useCounter arrow function
+    symbols = locate_symbols(str(f), [14])
+    assert len(symbols) == 1
+    assert symbols[0].symbol == "useCounter"
+    assert symbols[0].symbol_type == "hook"
