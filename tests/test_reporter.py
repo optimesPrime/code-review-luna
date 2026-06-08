@@ -84,3 +84,10 @@ def test_render_with_backend_review_items():
     assert "后端审查" in md
     assert "OrderController.cs" in md
     assert "接口入口缺少失败分支处理" in md
+
+
+def test_review_report_has_impact_paths_and_changed_symbols():
+    from reporter import ReviewReport
+    r = ReviewReport(timestamp="2026-01-01", diff_summary="1 line")
+    assert r.impact_paths == []
+    assert r.changed_symbols == []

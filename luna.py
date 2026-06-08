@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import click
 import yaml
 
 from config import load_config
+from runtime_context import RuntimeContext
 from diff_reader import get_diff, redact, DiffError
 from skill_loader import load_skills
 from confirmer import ask
@@ -86,15 +88,17 @@ def _should_run_backend_review(diff: str, cfg) -> bool:
 @click.option("--phase", default=None, type=click.Choice(["blast", "quality"]))
 @click.option("--apply", "apply_mode", is_flag=True, help="开启可写入模式，仍需逐条确认")
 @click.option("--interactive", "interactive", is_flag=True, help="逐条确认修复建议（默认跳过）")
+@click.option("--type", "project_type", default=None, type=click.Choice(["frontend", "backend", "fullstack"]), help="项目类型，覆盖自动检测")
 @click.option("--output", default=None, help="自定义报告输出路径")
 @click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "json"]))
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
-def cli(ctx, staged, since, tests, phase, apply_mode, interactive, output, fmt, config_path):
+def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type, output, fmt, config_path):
     """Luna — AI 代码审查工具
 
     直接运行 `luna` 即可审查当前 git 改动。
     使用 `luna switch` 切换 AI 提供商。
     """
+    start_time = time.time()
     if ctx.invoked_subcommand is not None:
         return
 
@@ -214,6 +218,8 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, output, fmt, 
                 related_rules=[],
                 related_tests=[f"{r.describe}: {r.it}" for r in related_tests],
             )
+            report.changed_symbols = [vars(s) if hasattr(s, '__dict__') else str(s) for s in symbols]
+            report.impact_paths = [str(p) for p in impact_paths]
         else:
             context_pack = None
 
@@ -258,8 +264,25 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, output, fmt, 
         }, ensure_ascii=False, indent=2))
         return
 
+    import re as _re
+    _file_matches = _re.findall(r"^diff --git a/\S+", diff, _re.MULTILINE)
+    _line_count = sum(1 for l in diff.splitlines() if l.startswith(("+", "-")) and not l.startswith(("+++", "---")))
+
+    runtime = RuntimeContext(
+        project_name=Path(".").resolve().name,
+        project_root=str(Path(".").resolve()),
+        project_type=project_type or ("frontend" if _should_run_frontend_pipeline(diff, cfg) else "auto"),
+        diff_scope="staged" if staged else (f"since {since}" if since else "working tree"),
+        changed_files=len(_file_matches),
+        changed_lines=_line_count,
+        backend_review_status="ran" if report.backend_review_items else "skipped",
+        elapsed_seconds=round(time.time() - start_time, 1),
+        report_path="",  # filled in after save()
+    )
+
     out_dir = output or cfg.reports.output_dir
     path = save(report, out_dir)
+    runtime.report_path = str(path)
     click.echo(f"\n报告已保存：{path}")
 
     high_count = sum(1 for i in report.blast_radius_items if i.risk == "high")
