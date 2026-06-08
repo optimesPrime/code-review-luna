@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from runtime_context import RuntimeContext
 
 try:
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.panel import Panel
     from rich.text import Text
     from rich.table import Table
@@ -258,6 +258,93 @@ class FixCandidate:
     impact: str     # "阻塞" | "高价值" | "建议" | "延后"
 
 
+def build_explosion_map(report: "ReviewReport"):
+    """Nested-ring explosion map. Returns outermost Panel or None."""
+    if not RICH_AVAILABLE:
+        return None
+
+    all_items = list(report.blast_radius_items) + list(report.code_quality_items) + list(report.backend_review_items)
+    if not all_items:
+        return None
+
+    # ── 改动点汇总（中心框内容） ────────────────────────────────────────────
+    symbols = []
+    files_seen: set = set()
+    files = []
+    for s in report.changed_symbols:
+        if isinstance(s, dict):
+            name = s.get("name") or s.get("symbol", "")
+            if name:
+                symbols.append(name)
+            f = s.get("file", "")
+            if f and f not in files_seen:
+                files_seen.add(f)
+                files.append(f.split("/")[-1])  # 只取文件名
+
+    if not symbols:
+        # 从 blast items 补充
+        for item in report.blast_radius_items:
+            sym = getattr(item, "symbol", "")
+            if sym and sym not in symbols:
+                symbols.append(sym)
+        files = list({item.file.split("/")[-1] for item in report.blast_radius_items})
+
+    symbols = symbols[:6]
+    files   = files[:5]
+
+    center_text = Text(justify="center")
+    if symbols:
+        center_text.append("  ".join(symbols) + "\n", style="bold cyan")
+    center_text.append("  ·  ".join(files) if files else "—", style="dim")
+
+    inner = Panel(
+        Align.center(center_text),
+        border_style="cyan",
+        padding=(1, 4),
+        subtitle="[dim cyan]改动入口[/dim cyan]",
+    )
+
+    # ── 圈层构建（从内到外：高→中→低） ────────────────────────────────────────
+    def item_rows(items, icon, color):
+        rows = []
+        seen: set = set()
+        for item in items:
+            reason = getattr(item, "reason", None) or getattr(item, "description", "")
+            key = f"{item.file}:{item.line}"
+            if key in seen:
+                continue
+            seen.add(key)
+            t = Text()
+            t.append(f"  {icon} ", style=color)
+            sym = getattr(item, "symbol", "") or getattr(item, "issue_type", "")
+            if sym:
+                t.append(sym, style=f"bold {color}")
+                t.append("  —  ")
+            t.append(reason)
+            t.append(f"  ({item.file}:{item.line})", style="dim")
+            rows.append(t)
+        return rows
+
+    for risk_level, icon, color, title_label, sublabel in [
+        ("high",   "🚨", "red",    "🚨  高风险  —  直接影响", "bold red"),
+        ("medium", "⚠️",  "yellow", "⚠️   中风险  —  间接影响", "bold yellow"),
+        ("low",    "💡", "blue",   "💡  低风险  —  远端影响",  "bold blue"),
+    ]:
+        ring_items = [i for i in all_items if i.risk == risk_level]
+        if not ring_items:
+            continue
+        rows = item_rows(ring_items, icon, color)
+        inner = Panel(
+            Group(inner, Text(""), *rows, Text("")),
+            title=f"[{sublabel}]{title_label}[/{sublabel}]",
+            border_style=color,
+            padding=(0, 2),
+            subtitle=f"[dim {color}]{len(rows)} 处[/dim {color}]",
+        )
+
+    return inner
+
+
 def _classify_fix_candidate(item) -> tuple[str, str]:
     risk = item.risk
     needs_human = getattr(item, "needs_human_review", False)
@@ -458,12 +545,12 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
     console.print(cp_tbl)
     console.print()
 
-    # ── 业务爆炸图 ────────────────────────────────────────────────────────────
-    console.print(Rule("💥  业务爆炸图", style="dim"))
+    # ── 业务爆炸影响范围地图 ──────────────────────────────────────────────────
+    console.print(Rule("💥  业务爆炸影响范围地图", style="dim"))
     console.print()
-    tree = build_business_tree(report)
-    if tree is not None:
-        console.print(Padding(tree, (0, 2)))
+    explosion = build_explosion_map(report)
+    if explosion is not None:
+        console.print(explosion)
     else:
         console.print(Padding("[dim]未发现明确传播链路[/dim]", (0, 2)))
     console.print()
