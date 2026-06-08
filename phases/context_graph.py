@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from phases._vue_utils import extract_vue_script as _extract_vue_script
 
 
 @dataclass
@@ -66,7 +67,7 @@ def build_graph(project_root: str) -> ContextGraph:
                 _process_vue_file(src, rel, root, graph)
             else:
                 _process_js_file(src, rel, root, graph)
-        except (ImportError, ModuleNotFoundError, OSError):
+        except (ImportError, ModuleNotFoundError, OSError, ValueError, RecursionError):
             _process_file_regex(src, rel, root, graph)
 
     return graph
@@ -92,26 +93,10 @@ def _process_js_file(src: Path, rel: str, root: Path, graph: ContextGraph) -> No
 
 
 def _process_vue_file(src: Path, rel: str, root: Path, graph: ContextGraph) -> None:
-    content = src.read_text(encoding="utf-8", errors="ignore")
-    # Reuse the same multi-script logic as symbol_locator
-    best: tuple[str, int] | None = None
-    for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", content, re.DOTALL):
-        attrs, body = m.group(1), m.group(2)
-        if re.search(r'\bsrc\s*=', attrs):
-            continue
-        offset = content[:m.start(2)].count("\n")
-        is_setup = "setup" in attrs
-        if best is None or is_setup:
-            best = (body, offset)
-        if is_setup:
-            break
-    if best is None:
+    script, line_offset = _extract_vue_script(src)
+    if not script:
         return
-    body_str, line_offset = best
-    script = body_str.encode("utf-8", errors="ignore")
-    from tree_sitter import Language, Parser
-    import tree_sitter_typescript as tsts
-    parser = Parser(Language(tsts.language_typescript()))
+    parser = _get_graph_parser(".ts")
     tree = parser.parse(script)
     _extract_graph_exports(tree.root_node, script, rel, graph, line_offset=line_offset)
     _extract_graph_imports(tree.root_node, script, src, rel, root, graph)
