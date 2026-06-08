@@ -85,10 +85,11 @@ def _should_run_backend_review(diff: str, cfg) -> bool:
 @click.option("--tests", default=None, help="测试文件或目录路径")
 @click.option("--phase", default=None, type=click.Choice(["blast", "quality"]))
 @click.option("--apply", "apply_mode", is_flag=True, help="开启可写入模式，仍需逐条确认")
+@click.option("--interactive", "interactive", is_flag=True, help="逐条确认修复建议（默认跳过）")
 @click.option("--output", default=None, help="自定义报告输出路径")
 @click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "json"]))
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
-def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
+def cli(ctx, staged, since, tests, phase, apply_mode, interactive, output, fmt, config_path):
     """Luna — AI 代码审查工具
 
     直接运行 `luna` 即可审查当前 git 改动。
@@ -98,6 +99,9 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
         return
 
     cfg = load_config(str(config_path or DEFAULT_CONFIG))
+    if apply_mode and not interactive:
+        click.echo("错误：--apply 仅在 --interactive 模式下有效，或使用 luna fix 命令。", err=True)
+        sys.exit(1)
     if apply_mode:
         cfg.review.apply_enabled = True
 
@@ -188,7 +192,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
                 note = " [需人工确认]" if item.needs_human_review else ""
                 click.echo(f"[后端·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
                 click.echo(f"  证据: {item.evidence}")
-                if item.suggestion and ask("  查看修复建议？"):
+                if interactive and item.suggestion and ask("  查看修复建议？"):
                     click.echo(f"  建议: {item.suggestion}")
 
     if phase in (None, "blast"):
@@ -219,7 +223,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
         for item in sorted(blast_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
             note = " [需人工确认]" if item.needs_human_review else ""
             click.echo(f"[爆炸范围·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
-            if item.suggestion and ask("  查看修复建议？"):
+            if interactive and item.suggestion and ask("  查看修复建议？"):
                 click.echo(f"  建议: {item.suggestion}")
                 if cfg.review.apply_enabled:
                     if ask("  应用此修改？"):
@@ -239,7 +243,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, output, fmt, config_path):
         for item in quality_items:
             click.echo(f"[代码质量·{item.risk}] {item.file}:{item.line} — {item.description}")
             click.echo(f"  依据: {item.evidence}")
-            if item.suggestion and ask("  查看修复建议？"):
+            if interactive and item.suggestion and ask("  查看修复建议？"):
                 click.echo(f"  建议: {item.suggestion}")
                 if cfg.review.apply_enabled:
                     if ask("  应用此修改？"):
