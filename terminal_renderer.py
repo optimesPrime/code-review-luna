@@ -244,9 +244,64 @@ def build_business_tree(report: "ReviewReport"):
     return tree
 
 
+@dataclass
+class FixCandidate:
+    id: int
+    mode: str       # "auto" | "assist" | "manual"
+    title: str
+    reason: str
+    command_hint: str
+    impact: str     # "阻塞" | "高价值" | "建议" | "延后"
+
+
+def _classify_fix_candidate(item) -> tuple[str, str]:
+    risk = item.risk
+    needs_human = getattr(item, "needs_human_review", False)
+    issue_type = getattr(item, "issue_type", "")
+    text = (getattr(item, "reason", "") + " " + getattr(item, "description", "")).lower()
+    _auth = {"auth", "permission", "login", "logout", "权限", "登录"}
+
+    if needs_human:
+        return "manual", ("阻塞" if risk == "high" else "高价值")
+    if issue_type == "missing_error_handling" and not any(kw in text for kw in _auth):
+        return "auto", "建议"
+    if issue_type in ("redundant", "dead_code"):
+        return "auto", "延后"
+    if hasattr(item, "needs_human_review"):  # is a BlastRadiusItem
+        return "assist", ("高价值" if risk == "high" else "建议")
+    return "manual", "建议"
+
+
 def build_fix_queue(report: "ReviewReport") -> list:
-    """Stub — implemented in Task 6."""
-    return []
+    """Build a prioritised list of FixCandidates from report items."""
+    candidates = []
+    counter = 1
+
+    all_items = list(report.blast_radius_items) + list(report.code_quality_items)
+    # Sort: high first, then medium, then low
+    all_items.sort(key=lambda i: {"high": 0, "medium": 1, "low": 2}.get(i.risk, 3))
+
+    for item in all_items:
+        # Must have suggestion OR be high risk
+        if not getattr(item, "suggestion", None) and item.risk != "high":
+            continue
+
+        mode, impact = _classify_fix_candidate(item)
+        title = (getattr(item, "reason", None) or getattr(item, "description", ""))[:50]
+        reason = f"{item.file}:{item.line}"
+        cmd = {"auto": f"luna fix {counter} --apply", "assist": f"luna fix {counter} --preview"}.get(mode, f"luna detail {counter}")
+
+        candidates.append(FixCandidate(
+            id=counter,
+            mode=mode,
+            title=title,
+            reason=reason,
+            command_hint=cmd,
+            impact=impact,
+        ))
+        counter += 1
+
+    return candidates
 
 
 # ── Main render entry ─────────────────────────────────────────────────────────
@@ -364,7 +419,21 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
             console.print("[dim]💥 业务爆炸图: 未发现明确传播链路[/dim]")
             console.print()
 
-        # Fix queue (Task 6 stub)
+        # Fix queue
+        fix_queue = build_fix_queue(report)
+        if fix_queue:
+            console.print("[bold]🛠 修复队列[/bold]")
+            for fc in fix_queue:
+                mode_style = {"auto": "green", "assist": "yellow", "manual": "red"}.get(fc.mode, "")
+                impact_style = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}.get(fc.impact, "")
+                console.print(
+                    f"  [dim]{fc.id}.[/dim] "
+                    f"[{mode_style}]{fc.mode:6}[/{mode_style}]  "
+                    f"[{impact_style}]{fc.impact}[/{impact_style}]  "
+                    f"{fc.title}  "
+                    f"[dim]{fc.command_hint}[/dim]"
+                )
+            console.print()
 
     # Footer
     if runtime.report_path:

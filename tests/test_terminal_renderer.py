@@ -169,6 +169,61 @@ class TestBuildBusinessTree:
         assert result is not None or result is None
 
 
+class TestBuildFixQueue:
+    def test_empty_report_returns_empty(self):
+        from terminal_renderer import build_fix_queue
+        r = _make_report()
+        assert build_fix_queue(r) == []
+
+    def test_high_risk_blast_included_even_without_suggestion(self):
+        from terminal_renderer import build_fix_queue
+        from phases.blast_radius import BlastRadiusItem
+        item = BlastRadiusItem(
+            risk="high", file="f.ts", line=1, symbol="x",
+            reason="critical issue", suggestion="",
+            needs_human_review=False,
+            confidence="medium",
+        )
+        r = _make_report(blast=[item])
+        queue = build_fix_queue(r)
+        assert len(queue) == 1
+        assert queue[0].mode == "assist"
+
+    def test_auto_classification(self):
+        from terminal_renderer import build_fix_queue
+        r = _make_report(quality=[_quality("medium", issue_type="missing_error_handling")])
+        queue = build_fix_queue(r)
+        # description="desc" doesn't contain auth keywords
+        assert any(fc.mode == "auto" for fc in queue)
+
+    def test_manual_for_needs_human_review(self):
+        from terminal_renderer import build_fix_queue
+        from phases.blast_radius import BlastRadiusItem
+        item = BlastRadiusItem(
+            risk="high", file="f.ts", line=1, symbol="x",
+            reason="business timing issue", suggestion="manual fix needed",
+            needs_human_review=True,
+            confidence="medium",
+        )
+        r = _make_report(blast=[item])
+        queue = build_fix_queue(r)
+        assert queue[0].mode == "manual"
+        assert queue[0].impact == "阻塞"
+
+    def test_command_hints_correct(self):
+        from terminal_renderer import build_fix_queue, FixCandidate
+        from phases.blast_radius import BlastRadiusItem
+        item = BlastRadiusItem(
+            risk="high", file="f.ts", line=1, symbol="x",
+            reason="store sync issue", suggestion="fix it",
+            needs_human_review=False,
+            confidence="medium",
+        )
+        r = _make_report(blast=[item])
+        queue = build_fix_queue(r)
+        assert queue[0].command_hint == "luna fix 1 --preview"
+
+
 class TestRenderReview:
     def test_json_mode_is_noop(self):
         from terminal_renderer import render_review

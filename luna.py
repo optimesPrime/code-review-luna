@@ -259,9 +259,12 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                         report.skipped_items.append(f"quality:{item.file}:{item.line}")
 
     if fmt == "json":
+        from terminal_renderer import build_fix_queue as _build_fq_json
+        fix_candidates_json = [vars(fc) for fc in _build_fq_json(report)]
         click.echo(json.dumps({
             "blast_radius": [vars(i) for i in report.blast_radius_items],
             "code_quality": [vars(i) for i in report.code_quality_items],
+            "fix_candidates": fix_candidates_json,
         }, ensure_ascii=False, indent=2))
         return
 
@@ -288,7 +291,8 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     path = save(report, out_dir)
     runtime.report_path = str(path)
 
-    from terminal_renderer import render_review
+    from terminal_renderer import render_review, build_fix_queue as _build_fq
+    report.fix_candidates = [vars(fc) for fc in _build_fq(report)]
     render_review(report, runtime, fmt=fmt, quiet=quiet)
 
 
