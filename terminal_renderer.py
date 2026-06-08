@@ -175,9 +175,73 @@ def build_checkpoints(report: "ReviewReport") -> List[CheckpointResult]:
     return results
 
 
-def build_business_tree(report: "ReviewReport") -> object:
-    """Stub — implemented in Task 5."""
-    return None
+RISK_ICON = {"high": "🚨", "medium": "⚠️", "low": "💡", "ok": "✅"}
+
+
+def build_business_tree(report: "ReviewReport"):
+    """Build Rich Tree for business impact. Returns None if nothing to show."""
+    if not RICH_AVAILABLE:
+        return None
+
+    blast_items = list(report.blast_radius_items)
+    impact_paths = list(report.impact_paths)  # list of dicts
+    changed_symbols = list(report.changed_symbols)  # list of dicts
+
+    if not blast_items and not impact_paths:
+        return None
+
+    # Determine root label
+    if changed_symbols:
+        root_name = changed_symbols[0].get("name", "") or changed_symbols[0].get("symbol", "改动影响范围")
+    else:
+        root_name = "改动影响范围"
+    root_name = root_name[:60]
+
+    tree = Tree(f"[bold cyan]💥 {root_name}[/bold cyan]")
+
+    if impact_paths:
+        # Strategy 1: use impact_paths
+        for path_dict in impact_paths[:10]:  # cap at 10 to avoid overwhelming output
+            risk = path_dict.get("risk", "low")
+            icon = RISK_ICON.get(risk, "")
+            # Try to get a meaningful label
+            path_val = path_dict.get("path", [])
+            if isinstance(path_val, list) and path_val:
+                label = " → ".join(str(p) for p in path_val[-2:])  # last 2 hops
+            else:
+                label = str(path_val)
+            label = label[:60]
+            evidence = path_dict.get("evidence", "")
+            reason = str(path_dict.get("reason", ""))[:50]
+            branch = tree.add(f"{icon} [{risk}] {label}")
+            if reason:
+                branch.add(f"[dim]{reason}[/dim]")
+            if evidence:
+                branch.add(f"[dim]证据: {str(evidence)[:50]}[/dim]")
+    else:
+        # Strategy 2: group blast items by checkpoint
+        grouped: dict = {}
+        for item in blast_items:
+            item_text = f"{item.reason} {item.file}".lower()
+            matched = False
+            for cp_name, keywords in CHECKPOINTS:
+                if any(kw in item_text for kw in keywords):
+                    grouped.setdefault(cp_name, []).append(item)
+                    matched = True
+                    break  # assign to first matching checkpoint only
+            if not matched:
+                grouped.setdefault("业务逻辑", []).append(item)
+
+        for cp_name, items in grouped.items():
+            # Find highest risk in this group
+            top_risk = max(items, key=lambda i: {"high": 2, "medium": 1, "low": 0}.get(i.risk, 0))
+            icon = RISK_ICON.get(top_risk.risk, "")
+            branch = tree.add(f"{icon} {cp_name}")
+            for item in items[:3]:  # max 3 items per group
+                leaf_text = f"{item.reason[:50]} ({item.file}:{item.line})"
+                branch.add(f"[dim]{leaf_text}[/dim]")
+
+    return tree
 
 
 def build_fix_queue(report: "ReviewReport") -> list:
@@ -289,7 +353,17 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
                 )
             console.print(tbl)
             console.print()
-        # Business tree (Task 5 stub)
+
+        # Business explosion tree
+        tree = build_business_tree(report)
+        if tree is not None:
+            console.print("[bold]💥 业务爆炸图[/bold]")
+            console.print(tree)
+            console.print()
+        else:
+            console.print("[dim]💥 业务爆炸图: 未发现明确传播链路[/dim]")
+            console.print()
+
         # Fix queue (Task 6 stub)
 
     # Footer
