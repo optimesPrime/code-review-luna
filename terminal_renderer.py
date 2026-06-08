@@ -305,41 +305,73 @@ def build_explosion_map(report: "ReviewReport"):
     )
 
     # ── 圈层构建（从内到外：高→中→低） ────────────────────────────────────────
-    def item_rows(items, icon, color):
-        rows = []
+    _MAX_PER_RING = 6  # 每圈最多显示条目数，超出折叠
+
+    def _cell(item, icon, color) -> Text:
+        """单个条目的卡片式文本（两行：标题行 + 证据行）"""
+        sym    = getattr(item, "symbol", "") or getattr(item, "issue_type", "")
+        reason = getattr(item, "reason", None) or getattr(item, "description", "")
+        t = Text()
+        t.append(f" {icon} ", style=color)
+        if sym:
+            t.append(sym, style=f"bold {color}")
+            t.append("  ")
+        t.append(reason)
+        t.append(f"\n    {item.file}:{item.line}", style="dim")
+        return t
+
+    def ring_grid(items, icon, color) -> Table:
+        """2 列网格，每格一个条目，行间留一行空白增加呼吸感。"""
         seen: set = set()
+        deduped = []
         for item in items:
-            reason = getattr(item, "reason", None) or getattr(item, "description", "")
             key = f"{item.file}:{item.line}"
-            if key in seen:
-                continue
-            seen.add(key)
-            t = Text()
-            t.append(f"  {icon} ", style=color)
-            sym = getattr(item, "symbol", "") or getattr(item, "issue_type", "")
-            if sym:
-                t.append(sym, style=f"bold {color}")
-                t.append("  —  ")
-            t.append(reason)
-            t.append(f"  ({item.file}:{item.line})", style="dim")
-            rows.append(t)
-        return rows
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+
+        overflow = max(0, len(deduped) - _MAX_PER_RING)
+        visible  = deduped[:_MAX_PER_RING]
+
+        tbl = Table.grid(padding=(1, 3), expand=True)
+        tbl.add_column(ratio=1)
+        tbl.add_column(ratio=1)
+
+        pairs = list(zip(visible[::2], visible[1::2]))
+        # 奇数条目时最后一行只有左格
+        if len(visible) % 2 == 1:
+            pairs.append((visible[-1], None))
+
+        for left_item, right_item in pairs:
+            left  = _cell(left_item, icon, color)
+            if right_item is not None:
+                right = _cell(right_item, icon, color)
+            else:
+                right = Text("")
+            tbl.add_row(left, right)
+
+        if overflow > 0:
+            tbl.add_row(
+                Text(f"  +{overflow} 处未展示", style="dim"),
+                Text(""),
+            )
+        return tbl
 
     for risk_level, icon, color, title_label, sublabel in [
-        ("high",   "🚨", "red",    "🚨  高风险  —  直接影响", "bold red"),
+        ("high",   "🚨", "red",    "🚨  高风险  —  直接影响",  "bold red"),
         ("medium", "⚠️",  "yellow", "⚠️   中风险  —  间接影响", "bold yellow"),
-        ("low",    "💡", "blue",   "💡  低风险  —  远端影响",  "bold blue"),
+        ("low",    "💡", "blue",   "💡  低风险  —  远端影响",   "bold blue"),
     ]:
         ring_items = [i for i in all_items if i.risk == risk_level]
         if not ring_items:
             continue
-        rows = item_rows(ring_items, icon, color)
+        grid = ring_grid(ring_items, icon, color)
         inner = Panel(
-            Group(inner, Text(""), *rows, Text("")),
+            Group(inner, Text(""), grid),
             title=f"[{sublabel}]{title_label}[/{sublabel}]",
             border_style=color,
             padding=(0, 2),
-            subtitle=f"[dim {color}]{len(rows)} 处[/dim {color}]",
+            subtitle=f"[dim {color}]{len(ring_items)} 处[/dim {color}]",
         )
 
     return inner
