@@ -405,37 +405,57 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
 
     # ── 审查点命中 ────────────────────────────────────────────────────────────
     checkpoints = build_checkpoints(report)
+    hits  = [cp for cp in checkpoints if cp.status != "ok"]
+    clean = [cp for cp in checkpoints if cp.status == "ok"]
+
     console.print(Rule("🔍  审查点命中", style="dim"))
     console.print()
-    tbl = Table(
+
+    cp_tbl = Table(
         show_header=True,
-        header_style="bold dim",
-        box=rich_box.SIMPLE_HEAD,
+        header_style="bold",
+        box=rich_box.ROUNDED,
         padding=(0, 1),
-        show_edge=False,
+        title_style="bold cyan",
+        border_style="dim",
     )
-    tbl.add_column("审查点",  style="bold", min_width=10, no_wrap=True)
-    tbl.add_column("状态",    min_width=10, no_wrap=True)
-    tbl.add_column("风险说明", max_width=34, no_wrap=True, overflow="ellipsis")
-    tbl.add_column("证据",    max_width=22, no_wrap=True, overflow="ellipsis", style="dim")
-    tbl.add_column("修复",    min_width=7,  no_wrap=True)
-    _status_map = {
-        "high":   ("🚨 high",    "bold red"),
-        "medium": ("⚠️  medium", "bold yellow"),
-        "low":    ("💡 low",     "bold blue"),
-        "ok":     ("✅ ok",      "dim green"),
-    }
-    for cp in checkpoints:
-        status_str, status_style = _status_map.get(cp.status, (cp.status, ""))
-        fix_style = {"manual": "red", "assist": "yellow", "auto": "green"}.get(cp.fix_mode, "dim")
-        tbl.add_row(
-            cp.name,
-            Text(status_str, style=status_style),
+    cp_tbl.add_column("",        min_width=2,  no_wrap=True, justify="center")   # 风险 icon
+    cp_tbl.add_column("审查点",  style="bold", min_width=10, no_wrap=True)
+    cp_tbl.add_column("风险说明", max_width=36, no_wrap=True, overflow="ellipsis")
+    cp_tbl.add_column("证据",    max_width=22, no_wrap=True, overflow="ellipsis", style="dim")
+    cp_tbl.add_column("修复方式", min_width=9,  no_wrap=True)
+
+    _cp_icon  = {"high": "🚨", "medium": "⚠️", "low": "💡", "ok": "✅"}
+    _cp_style = {"high": "bold red", "medium": "bold yellow", "low": "bold blue", "ok": "dim green"}
+    _fix_icon = {"manual": "👤", "assist": "🔧", "auto": "🤖", "-": ""}
+    _fix_color = {"manual": "red", "assist": "yellow", "auto": "green"}
+
+    for cp in hits:
+        icon  = _cp_icon.get(cp.status, "")
+        style = _cp_style.get(cp.status, "")
+        fix_icon  = _fix_icon.get(cp.fix_mode, "")
+        fix_color = _fix_color.get(cp.fix_mode, "dim")
+        cp_tbl.add_row(
+            Text(icon,  style=style),
+            Text(cp.name, style=style),
             cp.reason,
             cp.evidence,
-            Text(cp.fix_mode, style=fix_style),
+            Text(f"{fix_icon} {cp.fix_mode}", style=fix_color),
         )
-    console.print(tbl)
+
+    if hits and clean:
+        cp_tbl.add_section()
+
+    for cp in clean:
+        cp_tbl.add_row(
+            Text("✅", style="dim green"),
+            Text(cp.name, style="dim"),
+            Text("未发现明显风险", style="dim"),
+            Text("-", style="dim"),
+            Text("-", style="dim"),
+        )
+
+    console.print(cp_tbl)
     console.print()
 
     # ── 业务爆炸图 ────────────────────────────────────────────────────────────
@@ -455,23 +475,31 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
         console.print()
         fq_tbl = Table(
             show_header=True,
-            header_style="bold dim",
-            box=rich_box.SIMPLE_HEAD,
+            header_style="bold",
+            box=rich_box.ROUNDED,
             padding=(0, 1),
-            show_edge=False,
+            border_style="dim",
         )
-        fq_tbl.add_column("#",   style="dim",  min_width=2,  justify="right", no_wrap=True)
-        fq_tbl.add_column("模式", min_width=7,  no_wrap=True)
-        fq_tbl.add_column("影响", min_width=6,  no_wrap=True)
-        fq_tbl.add_column("说明", max_width=38, no_wrap=True, overflow="ellipsis")
-        fq_tbl.add_column("命令", style="dim",  max_width=24, no_wrap=True, overflow="ellipsis")
-        _mode_style  = {"auto": "green", "assist": "yellow", "manual": "red"}
-        _impact_style = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}
+        fq_tbl.add_column("#",    style="dim",  min_width=2, justify="right", no_wrap=True)
+        fq_tbl.add_column("模式",  min_width=10, no_wrap=True)
+        fq_tbl.add_column("影响",  min_width=8,  no_wrap=True)
+        fq_tbl.add_column("说明",  max_width=36, no_wrap=True, overflow="ellipsis")
+        fq_tbl.add_column("命令",  style="dim",  max_width=24, no_wrap=True, overflow="ellipsis")
+
+        _mode_icon   = {"auto": "🤖", "assist": "🔧", "manual": "👤"}
+        _mode_color  = {"auto": "green", "assist": "yellow", "manual": "red"}
+        _impact_icon  = {"阻塞": "🚫", "高价值": "⚡", "建议": "💬", "延后": "⏳"}
+        _impact_color = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}
+
         for fc in fix_queue:
+            m_icon  = _mode_icon.get(fc.mode, "")
+            m_color = _mode_color.get(fc.mode, "")
+            i_icon  = _impact_icon.get(fc.impact, "")
+            i_color = _impact_color.get(fc.impact, "")
             fq_tbl.add_row(
                 str(fc.id),
-                Text(fc.mode,   style=_mode_style.get(fc.mode, "")),
-                Text(fc.impact, style=_impact_style.get(fc.impact, "")),
+                Text(f"{m_icon} {fc.mode}",   style=m_color),
+                Text(f"{i_icon} {fc.impact}", style=i_color),
                 fc.title,
                 fc.command_hint,
             )
