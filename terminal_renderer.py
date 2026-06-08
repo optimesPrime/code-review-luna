@@ -333,9 +333,9 @@ def build_explosion_map(report: "ReviewReport"):
         overflow = max(0, len(deduped) - _MAX_PER_RING)
         visible  = deduped[:_MAX_PER_RING]
 
-        tbl = Table.grid(padding=(1, 3), expand=True)
-        tbl.add_column(ratio=1)
-        tbl.add_column(ratio=1)
+        tbl = Table(box=None, padding=(1, 2), expand=True, show_header=False, show_edge=False)
+        tbl.add_column(ratio=1, overflow="fold")
+        tbl.add_column(ratio=1, overflow="fold")
 
         pairs = list(zip(visible[::2], visible[1::2]))
         # 奇数条目时最后一行只有左格
