@@ -167,12 +167,11 @@ def build_checkpoints(report: "ReviewReport") -> List[CheckpointResult]:
         best = max(matching, key=lambda i: _RISK_ORDER.get(getattr(i, "risk", "low"), 0))
 
         raw_reason = getattr(best, "reason", None) or getattr(best, "description", "")
-        truncated_reason = raw_reason[:60]
 
         results.append(CheckpointResult(
             name=name,
             status=best.risk,
-            reason=truncated_reason,
+            reason=raw_reason,
             evidence=f"{best.file}:{best.line}",
             fix_mode=_derive_fix_mode(best),
         ))
@@ -292,7 +291,7 @@ def build_fix_queue(report: "ReviewReport") -> list:
             continue
 
         mode, impact = _classify_fix_candidate(item)
-        title = (getattr(item, "reason", None) or getattr(item, "description", ""))[:50]
+        title = getattr(item, "reason", None) or getattr(item, "description", "")
         reason = f"{item.file}:{item.line}"
         cmd = {"auto": f"luna fix {counter} --apply", "assist": f"luna fix {counter} --preview"}.get(mode, f"luna detail {counter}")
 
@@ -416,13 +415,14 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
         header_style="bold",
         box=rich_box.ROUNDED,
         padding=(0, 1),
-        title_style="bold cyan",
         border_style="dim",
+        show_lines=True,
+        expand=True,
     )
-    cp_tbl.add_column("",        min_width=2,  no_wrap=True, justify="center")   # 风险 icon
+    cp_tbl.add_column("",        min_width=2,  no_wrap=True, justify="center")
     cp_tbl.add_column("审查点",  style="bold", min_width=10, no_wrap=True)
-    cp_tbl.add_column("风险说明", max_width=36, no_wrap=True, overflow="ellipsis")
-    cp_tbl.add_column("证据",    max_width=22, no_wrap=True, overflow="ellipsis", style="dim")
+    cp_tbl.add_column("风险说明", min_width=28, ratio=4)
+    cp_tbl.add_column("证据",    min_width=18, no_wrap=True, style="dim")
     cp_tbl.add_column("修复方式", min_width=9,  no_wrap=True)
 
     _cp_icon  = {"high": "🚨", "medium": "⚠️", "low": "💡", "ok": "✅"}
@@ -479,12 +479,14 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
             box=rich_box.ROUNDED,
             padding=(0, 1),
             border_style="dim",
+            show_lines=True,
+            expand=True,
         )
-        fq_tbl.add_column("#",    style="dim",  min_width=2, justify="right", no_wrap=True)
+        fq_tbl.add_column("#",    style="dim",  min_width=2,  justify="right", no_wrap=True)
         fq_tbl.add_column("模式",  min_width=10, no_wrap=True)
         fq_tbl.add_column("影响",  min_width=8,  no_wrap=True)
-        fq_tbl.add_column("说明",  max_width=36, no_wrap=True, overflow="ellipsis")
-        fq_tbl.add_column("命令",  style="dim",  max_width=24, no_wrap=True, overflow="ellipsis")
+        fq_tbl.add_column("说明",  min_width=28, ratio=4)
+        fq_tbl.add_column("命令",  style="dim",  min_width=22, no_wrap=True)
 
         _mode_icon   = {"auto": "🤖", "assist": "🔧", "manual": "👤"}
         _mode_color  = {"auto": "green", "assist": "yellow", "manual": "red"}
