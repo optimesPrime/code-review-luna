@@ -100,10 +100,17 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     使用 `luna switch` 切换 AI 提供商。
     """
     start_time = time.time()
+    try:
+        from rich.console import Console as _RCon
+        _rcon = _RCon(stderr=True)
+    except ImportError:
+        _rcon = None
     if ctx.invoked_subcommand is not None:
         return
 
     cfg = load_config(str(config_path or DEFAULT_CONFIG))
+    if project_type:
+        cfg.review.project_type = project_type
     if apply_mode and not interactive:
         click.echo("错误：--apply 仅在 --interactive 模式下有效，或使用 luna fix 命令。", err=True)
         sys.exit(1)
@@ -153,7 +160,6 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     )
 
     if phase in (None, "blast") and _should_run_backend_review(diff, cfg):
-        click.echo("\n[后端] Backend Review Context Engine 分析中...\n")
         from phases.backend_adapter_registry import detect_backend_languages_from_diff as _detect
         detected_langs = _detect(diff)
         enabled = {l.lower() for l in cfg.backend.languages}
@@ -190,19 +196,23 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                 backend_symbols, combined_graph, max_depth=cfg.backend.max_depth
             )
             backend_pack = build_backend_context_pack(backend_symbols, backend_edges, backend_paths)
+            _status_ctx = _rcon.status("[cyan]后端审查分析中...[/cyan]") if _rcon else None
+            if _status_ctx:
+                _status_ctx.__enter__()
             backend_items = backend_review.analyze_backend(backend_pack, diff, skill_context, cfg)
+            if _status_ctx:
+                _status_ctx.__exit__(None, None, None)
             report.backend_review_items = backend_items
 
-            for item in sorted(backend_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
-                note = " [需人工确认]" if item.needs_human_review else ""
-                click.echo(f"[后端·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
-                click.echo(f"  证据: {item.evidence}")
-                if interactive and item.suggestion and ask("  查看修复建议？"):
-                    click.echo(f"  建议: {item.suggestion}")
+            if interactive:
+                for item in sorted(backend_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
+                    note = " [需人工确认]" if item.needs_human_review else ""
+                    click.echo(f"[后端·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
+                    click.echo(f"  证据: {item.evidence}")
+                    if item.suggestion and ask("  查看修复建议？"):
+                        click.echo(f"  建议: {item.suggestion}")
 
     if phase in (None, "blast"):
-        click.echo("\n[阶段1] 爆炸范围分析中...\n")
-
         if _should_run_frontend_pipeline(diff, cfg):
             cache_path = Path(".luna") / "cache" / "context-graph.json"
             graph = load_graph(str(cache_path))
@@ -224,39 +234,50 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
         else:
             context_pack = None
 
+        _status_ctx = _rcon.status("[cyan]爆炸范围分析中...[/cyan]") if _rcon else None
+        if _status_ctx:
+            _status_ctx.__enter__()
         blast_items = blast.analyze(diff, skill_context, cfg, context_pack=context_pack)
+        if _status_ctx:
+            _status_ctx.__exit__(None, None, None)
         report.blast_radius_items = blast_items
 
-        for item in sorted(blast_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
-            note = " [需人工确认]" if item.needs_human_review else ""
-            click.echo(f"[爆炸范围·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
-            if interactive and item.suggestion and ask("  查看修复建议？"):
-                click.echo(f"  建议: {item.suggestion}")
-                if cfg.review.apply_enabled:
-                    if ask("  应用此修改？"):
-                        report.applied_fixes.append(f"blast:{item.file}:{item.line}")
-                        click.echo("  [已记录，请按建议手动应用]")
+        if interactive:
+            for item in sorted(blast_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
+                note = " [需人工确认]" if item.needs_human_review else ""
+                click.echo(f"[爆炸范围·{item.risk}] {item.file}:{item.line} — {item.reason}{note}")
+                if item.suggestion and ask("  查看修复建议？"):
+                    click.echo(f"  建议: {item.suggestion}")
+                    if cfg.review.apply_enabled:
+                        if ask("  应用此修改？"):
+                            report.applied_fixes.append(f"blast:{item.file}:{item.line}")
+                            click.echo("  [已记录，请按建议手动应用]")
+                        else:
+                            report.skipped_items.append(f"blast:{item.file}:{item.line}")
                     else:
-                        report.skipped_items.append(f"blast:{item.file}:{item.line}")
-                else:
-                    if ask("  生成 patch 供人工复制？"):
-                        click.echo(f"\n--- patch ---\n{item.suggestion}\n--- end ---\n")
+                        if ask("  生成 patch 供人工复制？"):
+                            click.echo(f"\n--- patch ---\n{item.suggestion}\n--- end ---\n")
 
     if phase in (None, "quality"):
-        click.echo("\n[阶段2] 代码质量审查中...\n")
+        _status_ctx = _rcon.status("[cyan]代码质量审查中...[/cyan]") if _rcon else None
+        if _status_ctx:
+            _status_ctx.__enter__()
         quality_items = quality.analyze(diff, skill_context, cfg)
+        if _status_ctx:
+            _status_ctx.__exit__(None, None, None)
         report.code_quality_items = quality_items
 
-        for item in quality_items:
-            click.echo(f"[代码质量·{item.risk}] {item.file}:{item.line} — {item.description}")
-            click.echo(f"  依据: {item.evidence}")
-            if interactive and item.suggestion and ask("  查看修复建议？"):
-                click.echo(f"  建议: {item.suggestion}")
-                if cfg.review.apply_enabled:
-                    if ask("  应用此修改？"):
-                        report.applied_fixes.append(f"quality:{item.file}:{item.line}")
-                    else:
-                        report.skipped_items.append(f"quality:{item.file}:{item.line}")
+        if interactive:
+            for item in quality_items:
+                click.echo(f"[代码质量·{item.risk}] {item.file}:{item.line} — {item.description}")
+                click.echo(f"  依据: {item.evidence}")
+                if item.suggestion and ask("  查看修复建议？"):
+                    click.echo(f"  建议: {item.suggestion}")
+                    if cfg.review.apply_enabled:
+                        if ask("  应用此修改？"):
+                            report.applied_fixes.append(f"quality:{item.file}:{item.line}")
+                        else:
+                            report.skipped_items.append(f"quality:{item.file}:{item.line}")
 
     if fmt == "json":
         from terminal_renderer import build_fix_queue as _build_fq_json

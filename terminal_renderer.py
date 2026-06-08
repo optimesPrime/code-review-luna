@@ -13,6 +13,9 @@ try:
     from rich.text import Text
     from rich.table import Table
     from rich.tree import Tree
+    from rich.rule import Rule
+    from rich.columns import Columns
+    from rich import box as rich_box
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
@@ -343,99 +346,138 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
     verdict_label, verdict_style = build_verdict(report)
     high, medium, low = _count_risks(report)
 
-    # Header
+    # ── 标题 ─────────────────────────────────────────────────────────────────
     console.print()
-    console.print("[bold cyan]🌙 Luna Review[/bold cyan]")
+    console.print(Rule("[bold cyan]🌙  Luna Review[/bold cyan]", style="cyan"))
     console.print()
 
-    # Verdict panel
+    # ── Verdict ──────────────────────────────────────────────────────────────
     verdict_icon = {
-        "阻塞提交": "🚫",
-        "建议修复后提交": "⚠️",
+        "阻塞提交":       "🚫",
+        "建议修复后提交":  "⚠️",
         "可提交但建议关注": "💡",
-        "可提交": "✅",
+        "可提交":         "✅",
     }.get(verdict_label, "")
     console.print(Panel(
         Text(f"{verdict_icon}  {verdict_label}", style=verdict_style, justify="center"),
-        title="Verdict",
         border_style=verdict_style,
-        padding=(0, 2),
+        padding=(1, 4),
     ))
     console.print()
 
-    # Summary row
+    # ── 摘要：左列元信息 + 右列风险统计 ──────────────────────────────────────
     backend_label = "skipped" if runtime.backend_review_status == "skipped" else runtime.backend_review_status
-    summary = Table.grid(padding=(0, 2))
-    summary.add_column(style="dim")
-    summary.add_column()
-    summary.add_row("项目:", runtime.project_name or "—")
-    summary.add_row("类型:", runtime.project_type)
-    summary.add_row("范围:", runtime.diff_scope)
-    summary.add_row("后端审查:", backend_label)
-    summary.add_row("改动:", f"{runtime.changed_files} files / {runtime.changed_lines} lines")
-    summary.add_row("耗时:", f"{runtime.elapsed_seconds}s")
-    if not quiet:
-        summary.add_row("高风险:", f"[red]{high}[/red]" if high else str(high))
-        summary.add_row("中风险:", f"[yellow]{medium}[/yellow]" if medium else str(medium))
-        summary.add_row("低风险:", str(low))
-    console.print(summary)
+
+    meta = Table.grid(padding=(0, 2))
+    meta.add_column(style="dim", min_width=8)
+    meta.add_column(min_width=20)
+    meta.add_row("项目", runtime.project_name or "—")
+    meta.add_row("类型", runtime.project_type)
+    meta.add_row("范围", runtime.diff_scope)
+    meta.add_row("后端审查", backend_label)
+    meta.add_row("改动", f"{runtime.changed_files} files / {runtime.changed_lines} lines")
+    meta.add_row("耗时", f"{runtime.elapsed_seconds}s")
+
+    risks = Table.grid(padding=(0, 2))
+    risks.add_column(min_width=10)
+    risks.add_column(min_width=4, justify="right")
+    risks.add_row(
+        Text("🚨 高风险", style="red" if high else "dim"),
+        Text(str(high), style="bold red" if high else "dim"),
+    )
+    risks.add_row(
+        Text("⚠️  中风险", style="yellow" if medium else "dim"),
+        Text(str(medium), style="bold yellow" if medium else "dim"),
+    )
+    risks.add_row(
+        Text("💡 低风险", style="blue" if low else "dim"),
+        Text(str(low), style="bold blue" if low else "dim"),
+    )
+
+    console.print(Columns([meta, risks], padding=(0, 4)))
     console.print()
 
-    if not quiet:
-        # Checkpoint matrix
-        checkpoints = build_checkpoints(report)
-        if checkpoints:
-            console.print("[bold]🔍 审查点命中[/bold]")
-            tbl = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
-            tbl.add_column("审查点", style="bold", min_width=10)
-            tbl.add_column("状态", min_width=6)
-            tbl.add_column("风险说明", min_width=20, max_width=50)
-            tbl.add_column("证据", min_width=12)
-            tbl.add_column("修复方式", min_width=8)
-            for cp in checkpoints:
-                status_str, status_style = {
-                    "high":   ("🚨 high",   "red"),
-                    "medium": ("⚠️ medium", "yellow"),
-                    "low":    ("💡 low",    "blue"),
-                    "ok":     ("✅ ok",     "green"),
-                }.get(cp.status, (cp.status, ""))
-                tbl.add_row(
-                    cp.name,
-                    Text(status_str, style=status_style),
-                    cp.reason,
-                    cp.evidence,
-                    cp.fix_mode,
-                )
-            console.print(tbl)
-            console.print()
+    if quiet:
+        if runtime.report_path:
+            console.print(Rule(f"[dim]报告: {runtime.report_path}[/dim]", style="dim"))
+        return
 
-        # Business explosion tree
-        tree = build_business_tree(report)
-        if tree is not None:
-            console.print("[bold]💥 业务爆炸图[/bold]")
-            console.print(tree)
-            console.print()
-        else:
-            console.print("[dim]💥 业务爆炸图: 未发现明确传播链路[/dim]")
-            console.print()
+    # ── 审查点命中 ────────────────────────────────────────────────────────────
+    checkpoints = build_checkpoints(report)
+    console.print(Rule("🔍  审查点命中", style="dim"))
+    console.print()
+    tbl = Table(
+        show_header=True,
+        header_style="bold dim",
+        box=rich_box.SIMPLE_HEAD,
+        padding=(0, 1),
+        show_edge=False,
+    )
+    tbl.add_column("审查点", style="bold", min_width=12)
+    tbl.add_column("状态", min_width=10)
+    tbl.add_column("风险说明", min_width=20, max_width=48, no_wrap=False)
+    tbl.add_column("证据", min_width=14, style="dim")
+    tbl.add_column("修复", min_width=7)
+    for cp in checkpoints:
+        status_map = {
+            "high":   ("🚨 high",    "bold red"),
+            "medium": ("⚠️  medium", "bold yellow"),
+            "low":    ("💡 low",     "bold blue"),
+            "ok":     ("✅ ok",      "green"),
+        }
+        status_str, status_style = status_map.get(cp.status, (cp.status, ""))
+        fix_style = {"manual": "red", "assist": "yellow", "auto": "green"}.get(cp.fix_mode, "dim")
+        tbl.add_row(
+            cp.name,
+            Text(status_str, style=status_style),
+            cp.reason,
+            cp.evidence,
+            Text(cp.fix_mode, style=fix_style),
+        )
+    console.print(tbl)
+    console.print()
 
-        # Fix queue
-        fix_queue = build_fix_queue(report)
-        if fix_queue:
-            console.print("[bold]🛠 修复队列[/bold]")
-            for fc in fix_queue:
-                mode_style = {"auto": "green", "assist": "yellow", "manual": "red"}.get(fc.mode, "")
-                impact_style = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}.get(fc.impact, "")
-                console.print(
-                    f"  [dim]{fc.id}.[/dim] "
-                    f"[{mode_style}]{fc.mode:6}[/{mode_style}]  "
-                    f"[{impact_style}]{fc.impact}[/{impact_style}]  "
-                    f"{fc.title}  "
-                    f"[dim]{fc.command_hint}[/dim]"
-                )
-            console.print()
+    # ── 业务爆炸图 ────────────────────────────────────────────────────────────
+    console.print(Rule("💥  业务爆炸图", style="dim"))
+    console.print()
+    tree = build_business_tree(report)
+    if tree is not None:
+        console.print(tree)
+    else:
+        console.print("  [dim]未发现明确传播链路[/dim]")
+    console.print()
 
-    # Footer
+    # ── 修复队列 ──────────────────────────────────────────────────────────────
+    fix_queue = build_fix_queue(report)
+    if fix_queue:
+        console.print(Rule("🛠   修复队列", style="dim"))
+        console.print()
+        fq_tbl = Table(
+            show_header=True,
+            header_style="bold dim",
+            box=rich_box.SIMPLE_HEAD,
+            padding=(0, 1),
+            show_edge=False,
+        )
+        fq_tbl.add_column("#", style="dim", min_width=2, justify="right")
+        fq_tbl.add_column("模式", min_width=7)
+        fq_tbl.add_column("影响", min_width=6)
+        fq_tbl.add_column("说明", min_width=20, max_width=50)
+        fq_tbl.add_column("命令", style="dim", min_width=24)
+        for fc in fix_queue:
+            mode_style = {"auto": "green", "assist": "yellow", "manual": "red"}.get(fc.mode, "")
+            impact_style = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}.get(fc.impact, "")
+            fq_tbl.add_row(
+                str(fc.id),
+                Text(fc.mode, style=mode_style),
+                Text(fc.impact, style=impact_style),
+                fc.title,
+                fc.command_hint,
+            )
+        console.print(fq_tbl)
+        console.print()
+
+    # ── 页脚 ──────────────────────────────────────────────────────────────────
     if runtime.report_path:
-        console.print(f"[dim]报告已保存: {runtime.report_path}[/dim]")
+        console.print(Rule(f"[dim]报告: {runtime.report_path}[/dim]", style="dim"))
     console.print()
