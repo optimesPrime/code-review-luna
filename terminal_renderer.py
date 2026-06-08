@@ -15,6 +15,8 @@ try:
     from rich.tree import Tree
     from rich.rule import Rule
     from rich.columns import Columns
+    from rich.align import Align
+    from rich.padding import Padding
     from rich import box as rich_box
     RICH_AVAILABLE = True
 except ImportError:
@@ -351,50 +353,49 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
     console.print(Rule("[bold cyan]🌙  Luna Review[/bold cyan]", style="cyan"))
     console.print()
 
-    # ── Verdict ──────────────────────────────────────────────────────────────
+    # ── Verdict（居中，固定宽度，不铺满全屏）─────────────────────────────────
     verdict_icon = {
-        "阻塞提交":       "🚫",
-        "建议修复后提交":  "⚠️",
+        "阻塞提交":        "🚫",
+        "建议修复后提交":   "⚠️",
         "可提交但建议关注": "💡",
-        "可提交":         "✅",
+        "可提交":          "✅",
     }.get(verdict_label, "")
-    console.print(Panel(
+    verdict_panel = Panel(
         Text(f"{verdict_icon}  {verdict_label}", style=verdict_style, justify="center"),
         border_style=verdict_style,
-        padding=(1, 4),
-    ))
+        padding=(1, 6),
+        width=52,
+    )
+    console.print(Align.center(verdict_panel))
     console.print()
 
-    # ── 摘要：左列元信息 + 右列风险统计 ──────────────────────────────────────
+    # ── 摘要：一行信息条 + 一行风险徽章 ──────────────────────────────────────
     backend_label = "skipped" if runtime.backend_review_status == "skipped" else runtime.backend_review_status
+    sep = Text("  ·  ", style="dim")
 
-    meta = Table.grid(padding=(0, 2))
-    meta.add_column(style="dim", min_width=8)
-    meta.add_column(min_width=20)
-    meta.add_row("项目", runtime.project_name or "—")
-    meta.add_row("类型", runtime.project_type)
-    meta.add_row("范围", runtime.diff_scope)
-    meta.add_row("后端审查", backend_label)
-    meta.add_row("改动", f"{runtime.changed_files} files / {runtime.changed_lines} lines")
-    meta.add_row("耗时", f"{runtime.elapsed_seconds}s")
+    info_line = Text()
+    info_line.append(runtime.project_name or "—", style="bold")
+    info_line.append("  ·  ", style="dim")
+    info_line.append(runtime.project_type, style="cyan")
+    info_line.append("  ·  ", style="dim")
+    info_line.append(runtime.diff_scope, style="dim")
+    info_line.append("  ·  ", style="dim")
+    info_line.append(f"{runtime.changed_files} files  {runtime.changed_lines} lines", style="dim")
+    info_line.append("  ·  ", style="dim")
+    info_line.append(f"{runtime.elapsed_seconds}s", style="dim")
+    info_line.append("  ·  ", style="dim")
+    info_line.append(f"后端: {backend_label}", style="dim")
 
-    risks = Table.grid(padding=(0, 2))
-    risks.add_column(min_width=10)
-    risks.add_column(min_width=4, justify="right")
-    risks.add_row(
-        Text("🚨 高风险", style="red" if high else "dim"),
-        Text(str(high), style="bold red" if high else "dim"),
-    )
-    risks.add_row(
-        Text("⚠️  中风险", style="yellow" if medium else "dim"),
-        Text(str(medium), style="bold yellow" if medium else "dim"),
-    )
-    risks.add_row(
-        Text("💡 低风险", style="blue" if low else "dim"),
-        Text(str(low), style="bold blue" if low else "dim"),
-    )
+    risk_line = Text()
+    risk_line.append("  🚨 ", style="")
+    risk_line.append(str(high), style="bold red" if high else "dim")
+    risk_line.append("   ⚠️  ", style="")
+    risk_line.append(str(medium), style="bold yellow" if medium else "dim")
+    risk_line.append("   💡 ", style="")
+    risk_line.append(str(low), style="bold blue" if low else "dim")
 
-    console.print(Columns([meta, risks], padding=(0, 4)))
+    console.print(Padding(info_line, (0, 2)))
+    console.print(Padding(risk_line, (0, 2)))
     console.print()
 
     if quiet:
@@ -413,19 +414,19 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
         padding=(0, 1),
         show_edge=False,
     )
-    tbl.add_column("审查点", style="bold", min_width=12)
-    tbl.add_column("状态", min_width=10)
-    tbl.add_column("风险说明", min_width=20, max_width=48, no_wrap=False)
-    tbl.add_column("证据", min_width=14, style="dim")
-    tbl.add_column("修复", min_width=7)
+    tbl.add_column("审查点",  style="bold", min_width=10, no_wrap=True)
+    tbl.add_column("状态",    min_width=10, no_wrap=True)
+    tbl.add_column("风险说明", max_width=34, no_wrap=True, overflow="ellipsis")
+    tbl.add_column("证据",    max_width=22, no_wrap=True, overflow="ellipsis", style="dim")
+    tbl.add_column("修复",    min_width=7,  no_wrap=True)
+    _status_map = {
+        "high":   ("🚨 high",    "bold red"),
+        "medium": ("⚠️  medium", "bold yellow"),
+        "low":    ("💡 low",     "bold blue"),
+        "ok":     ("✅ ok",      "dim green"),
+    }
     for cp in checkpoints:
-        status_map = {
-            "high":   ("🚨 high",    "bold red"),
-            "medium": ("⚠️  medium", "bold yellow"),
-            "low":    ("💡 low",     "bold blue"),
-            "ok":     ("✅ ok",      "green"),
-        }
-        status_str, status_style = status_map.get(cp.status, (cp.status, ""))
+        status_str, status_style = _status_map.get(cp.status, (cp.status, ""))
         fix_style = {"manual": "red", "assist": "yellow", "auto": "green"}.get(cp.fix_mode, "dim")
         tbl.add_row(
             cp.name,
@@ -442,15 +443,15 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
     console.print()
     tree = build_business_tree(report)
     if tree is not None:
-        console.print(tree)
+        console.print(Padding(tree, (0, 2)))
     else:
-        console.print("  [dim]未发现明确传播链路[/dim]")
+        console.print(Padding("[dim]未发现明确传播链路[/dim]", (0, 2)))
     console.print()
 
     # ── 修复队列 ──────────────────────────────────────────────────────────────
     fix_queue = build_fix_queue(report)
     if fix_queue:
-        console.print(Rule("🛠   修复队列", style="dim"))
+        console.print(Rule("🛠  修复队列", style="dim"))
         console.print()
         fq_tbl = Table(
             show_header=True,
@@ -459,18 +460,18 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
             padding=(0, 1),
             show_edge=False,
         )
-        fq_tbl.add_column("#", style="dim", min_width=2, justify="right")
-        fq_tbl.add_column("模式", min_width=7)
-        fq_tbl.add_column("影响", min_width=6)
-        fq_tbl.add_column("说明", min_width=20, max_width=50)
-        fq_tbl.add_column("命令", style="dim", min_width=24)
+        fq_tbl.add_column("#",   style="dim",  min_width=2,  justify="right", no_wrap=True)
+        fq_tbl.add_column("模式", min_width=7,  no_wrap=True)
+        fq_tbl.add_column("影响", min_width=6,  no_wrap=True)
+        fq_tbl.add_column("说明", max_width=38, no_wrap=True, overflow="ellipsis")
+        fq_tbl.add_column("命令", style="dim",  max_width=24, no_wrap=True, overflow="ellipsis")
+        _mode_style  = {"auto": "green", "assist": "yellow", "manual": "red"}
+        _impact_style = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}
         for fc in fix_queue:
-            mode_style = {"auto": "green", "assist": "yellow", "manual": "red"}.get(fc.mode, "")
-            impact_style = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}.get(fc.impact, "")
             fq_tbl.add_row(
                 str(fc.id),
-                Text(fc.mode, style=mode_style),
-                Text(fc.impact, style=impact_style),
+                Text(fc.mode,   style=_mode_style.get(fc.mode, "")),
+                Text(fc.impact, style=_impact_style.get(fc.impact, "")),
                 fc.title,
                 fc.command_hint,
             )
