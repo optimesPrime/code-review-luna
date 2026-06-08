@@ -43,7 +43,7 @@ def locate_symbols(file_path: str, changed_lines: list[int]) -> list[ChangedSymb
         return _locate_symbols_regex(file_path, changed_lines)
     try:
         return _locate_symbols_ast(path, changed_lines)
-    except Exception:
+    except (ImportError, ModuleNotFoundError, OSError):
         return _locate_symbols_regex(file_path, changed_lines)
 
 
@@ -89,16 +89,35 @@ def _get_js_language(ext: str):
 
 
 def _extract_vue_script(path: Path) -> tuple[bytes, int]:
-    """Extract <script> block from Vue SFC. Returns (content_bytes, line_offset)."""
+    """Extract <script> or <script setup> block from a Vue SFC.
+
+    Prefers <script setup> over <script> when both exist.
+    Returns (content_bytes, line_offset) where line_offset is the number of
+    lines before the script content in the original file.
+    Returns (b"", 0) if no script block or only src= external scripts found.
+    """
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return (b"", 0)
-    m = re.search(r"<script\b[^>]*>(.*?)</script>", content, re.DOTALL)
-    if not m:
+
+    # Find all <script ...>...</script> blocks (excluding src= external references)
+    best: tuple[str, int] | None = None  # (content_str, line_offset)
+    for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", content, re.DOTALL):
+        attrs, body = m.group(1), m.group(2)
+        if re.search(r'\bsrc\s*=', attrs):
+            continue  # skip external script references
+        offset = content[:m.start(2)].count("\n")
+        is_setup = "setup" in attrs
+        if best is None or is_setup:
+            best = (body, offset)
+        if is_setup:
+            break  # <script setup> takes priority, stop searching
+
+    if best is None:
         return (b"", 0)
-    offset = content[:m.start(1)].count("\n")
-    return (m.group(1).encode("utf-8", errors="ignore"), offset)
+    body_str, offset = best
+    return (body_str.encode("utf-8", errors="ignore"), offset)
 
 
 def _locate_symbols_ast(path: Path, changed_lines: list[int]) -> list[ChangedSymbol]:
