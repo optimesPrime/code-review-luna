@@ -20,5 +20,7 @@ def test_custom_values():
         elapsed_seconds=1.5,
     )
     assert ctx.project_name == "my-app"
+    assert ctx.project_type == "frontend"
+    assert ctx.diff_scope == "staged"
     assert ctx.changed_files == 3
     assert ctx.elapsed_seconds == 1.5

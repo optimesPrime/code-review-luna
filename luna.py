@@ -219,7 +219,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                 related_tests=[f"{r.describe}: {r.it}" for r in related_tests],
             )
             report.changed_symbols = [vars(s) if hasattr(s, '__dict__') else str(s) for s in symbols]
-            report.impact_paths = [str(p) for p in impact_paths]
+            report.impact_paths = [vars(p) if hasattr(p, '__dict__') else str(p) for p in impact_paths]
         else:
             context_pack = None
 
@@ -271,7 +271,10 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     runtime = RuntimeContext(
         project_name=Path(".").resolve().name,
         project_root=str(Path(".").resolve()),
-        project_type=project_type or ("frontend" if _should_run_frontend_pipeline(diff, cfg) else "auto"),
+        project_type=project_type or (
+            "frontend" if _should_run_frontend_pipeline(diff, cfg)
+            else ("backend" if report.backend_review_items else "auto")
+        ),
         diff_scope="staged" if staged else (f"since {since}" if since else "working tree"),
         changed_files=len(_file_matches),
         changed_lines=_line_count,
