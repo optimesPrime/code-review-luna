@@ -92,7 +92,8 @@ def _should_run_backend_review(diff: str, cfg) -> bool:
 @click.option("--output", default=None, help="自定义报告输出路径")
 @click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "json"]))
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
-def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type, output, fmt, config_path):
+@click.option("--quiet", "quiet", is_flag=True, help="只输出摘要，不展开详情")
+def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type, output, fmt, config_path, quiet):
     """Luna — AI 代码审查工具
 
     直接运行 `luna` 即可审查当前 git 改动。
@@ -286,11 +287,9 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     out_dir = output or cfg.reports.output_dir
     path = save(report, out_dir)
     runtime.report_path = str(path)
-    click.echo(f"\n报告已保存：{path}")
 
-    high_count = sum(1 for i in report.blast_radius_items if i.risk == "high")
-    if high_count:
-        click.echo(f"注意：发现 {high_count} 处高风险爆炸范围，请重点复审。")
+    from terminal_renderer import render_review
+    render_review(report, runtime, fmt=fmt, quiet=quiet)
 
 
 @cli.command()
