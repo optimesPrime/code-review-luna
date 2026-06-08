@@ -61,31 +61,186 @@ def build_graph(project_root: str) -> ContextGraph:
     for src in source_files:
         rel = str(src.relative_to(root))
         graph.nodes[rel] = GraphNode(id=rel, node_type="file", file=rel, name=rel)
-
         try:
-            content = src.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-
-        for i, line in enumerate(content.splitlines(), 1):
-            for pat, sym_type in _EXPORT_PATTERNS:
-                m = re.match(pat, line)
-                if m:
-                    sym = m.group(1)
-                    nid = f"{rel}:{sym}"
-                    graph.nodes[nid] = GraphNode(
-                        id=nid, node_type="export", file=rel, name=sym, line=i
-                    )
-                    graph.edges.append(GraphEdge(source=rel, target=nid, edge_type="exports"))
-
-        for pat in _IMPORT_PATTERNS:
-            for m in re.finditer(pat, content, re.MULTILINE):
-                resolved = _resolve_import(src.parent, root, m.group(1))
-                if resolved:
-                    graph.edges.append(GraphEdge(source=rel, target=resolved, edge_type="imports"))
-                    graph._importers.setdefault(resolved, set()).add(rel)
+            if src.suffix == ".vue":
+                _process_vue_file(src, rel, root, graph)
+            else:
+                _process_js_file(src, rel, root, graph)
+        except (ImportError, ModuleNotFoundError, OSError):
+            _process_file_regex(src, rel, root, graph)
 
     return graph
+
+
+def _get_graph_parser(ext: str):
+    from tree_sitter import Language, Parser
+    if ext in (".ts", ".tsx"):
+        import tree_sitter_typescript as tsts
+        lang = tsts.language_tsx() if ext == ".tsx" else tsts.language_typescript()
+    else:
+        import tree_sitter_javascript as tsjs
+        lang = tsjs.language()
+    return Parser(Language(lang))
+
+
+def _process_js_file(src: Path, rel: str, root: Path, graph: ContextGraph) -> None:
+    source = src.read_bytes()
+    parser = _get_graph_parser(src.suffix.lower())
+    tree = parser.parse(source)
+    _extract_graph_exports(tree.root_node, source, rel, graph, line_offset=0)
+    _extract_graph_imports(tree.root_node, source, src, rel, root, graph)
+
+
+def _process_vue_file(src: Path, rel: str, root: Path, graph: ContextGraph) -> None:
+    content = src.read_text(encoding="utf-8", errors="ignore")
+    # Reuse the same multi-script logic as symbol_locator
+    best: tuple[str, int] | None = None
+    for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", content, re.DOTALL):
+        attrs, body = m.group(1), m.group(2)
+        if re.search(r'\bsrc\s*=', attrs):
+            continue
+        offset = content[:m.start(2)].count("\n")
+        is_setup = "setup" in attrs
+        if best is None or is_setup:
+            best = (body, offset)
+        if is_setup:
+            break
+    if best is None:
+        return
+    body_str, line_offset = best
+    script = body_str.encode("utf-8", errors="ignore")
+    from tree_sitter import Language, Parser
+    import tree_sitter_typescript as tsts
+    parser = Parser(Language(tsts.language_typescript()))
+    tree = parser.parse(script)
+    _extract_graph_exports(tree.root_node, script, rel, graph, line_offset=line_offset)
+    _extract_graph_imports(tree.root_node, script, src, rel, root, graph)
+
+
+def _extract_graph_exports(root_node, source: bytes, rel: str, graph: ContextGraph, line_offset: int) -> None:
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "export_statement":
+            _handle_graph_export(node, source, rel, graph, line_offset)
+            continue  # Don't descend into export nodes
+        # Top-level defineStore/defineComponent without export keyword
+        if node.type in ("lexical_declaration", "variable_declaration"):
+            parent = node.parent
+            if parent and parent.type in ("program", "module"):
+                _handle_top_level_store_or_component(node, source, rel, graph, line_offset)
+        stack.extend(node.children)
+
+
+def _handle_graph_export(node, source: bytes, rel: str, graph: ContextGraph, line_offset: int) -> None:
+    for child in node.children:
+        name, sym_type = "", ""
+        if child.type == "function_declaration":
+            nn = child.child_by_field_name("name")
+            name = _gtext(nn, source)
+            sym_type = _classify_export_sym(name, child, source)
+        elif child.type == "class_declaration":
+            nn = child.child_by_field_name("name")
+            name = _gtext(nn, source)
+            sym_type = "class"
+        elif child.type in ("lexical_declaration", "variable_declaration"):
+            for decl in child.children:
+                if decl.type == "variable_declarator":
+                    nn = decl.child_by_field_name("name")
+                    name = _gtext(nn, source)
+                    val = decl.child_by_field_name("value")
+                    sym_type = _classify_export_sym(name, val, source) if val else _classify_export_sym(name, child, source)
+                    break
+        if name:
+            nid = f"{rel}:{name}"
+            line = node.start_point[0] + 1 + line_offset
+            graph.nodes[nid] = GraphNode(id=nid, node_type=sym_type or "export", file=rel, name=name, line=line)
+            graph.edges.append(GraphEdge(source=rel, target=nid, edge_type="exports"))
+
+
+def _handle_top_level_store_or_component(node, source: bytes, rel: str, graph: ContextGraph, line_offset: int) -> None:
+    for child in node.children:
+        if child.type != "variable_declarator":
+            continue
+        nn = child.child_by_field_name("name")
+        name = _gtext(nn, source)
+        val = child.child_by_field_name("value")
+        if val and val.type == "call_expression":
+            fn = val.child_by_field_name("function")
+            fn_name = _gtext(fn, source)
+            if fn_name in ("defineStore", "defineComponent"):
+                sym_type = "store" if fn_name == "defineStore" else "component"
+                nid = f"{rel}:{name}"
+                if nid not in graph.nodes:
+                    line = node.start_point[0] + 1 + line_offset
+                    graph.nodes[nid] = GraphNode(id=nid, node_type=sym_type, file=rel, name=name, line=line)
+                    graph.edges.append(GraphEdge(source=rel, target=nid, edge_type="exports"))
+
+
+def _extract_graph_imports(root_node, source: bytes, src: Path, rel: str, root: Path, graph: ContextGraph) -> None:
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "import_statement":
+            for child in node.children:
+                if child.type == "string":
+                    raw = _gtext(child, source).strip("'\"")
+                    if raw.startswith("."):
+                        resolved = _resolve_import(src.parent, root, raw)
+                        if resolved:
+                            graph.edges.append(GraphEdge(source=rel, target=resolved, edge_type="imports"))
+                            graph._importers.setdefault(resolved, set()).add(rel)
+                    break
+        else:
+            stack.extend(node.children)
+
+
+def _classify_export_sym(name: str, node, source: bytes) -> str:
+    if not name:
+        return "export"
+    # Check for defineStore / defineComponent call
+    if node is not None and node.type == "call_expression":
+        fn = node.child_by_field_name("function")
+        fn_name = _gtext(fn, source)
+        if fn_name == "defineStore":
+            return "store"
+        if fn_name == "defineComponent":
+            return "component"
+    if node is not None and node.type == "class_declaration":
+        return "class"
+    if name.startswith("use") and len(name) > 3 and (name[3].isupper() or name[3] == "_"):
+        return "hook"
+    if name[0].isupper():
+        return "component"
+    return "function"
+
+
+def _process_file_regex(src: Path, rel: str, root: Path, graph: ContextGraph) -> None:
+    """Fallback: original regex-based processing."""
+    try:
+        content = src.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return
+    for i, line in enumerate(content.splitlines(), 1):
+        for pat, sym_type in _EXPORT_PATTERNS:
+            m = re.match(pat, line)
+            if m:
+                sym = m.group(1)
+                nid = f"{rel}:{sym}"
+                graph.nodes[nid] = GraphNode(id=nid, node_type="export", file=rel, name=sym, line=i)
+                graph.edges.append(GraphEdge(source=rel, target=nid, edge_type="exports"))
+    for pat in _IMPORT_PATTERNS:
+        for m in re.finditer(pat, content, re.MULTILINE):
+            resolved = _resolve_import(src.parent, root, m.group(1))
+            if resolved:
+                graph.edges.append(GraphEdge(source=rel, target=resolved, edge_type="imports"))
+                graph._importers.setdefault(resolved, set()).add(rel)
+
+
+def _gtext(node, source: bytes) -> str:
+    if node is None:
+        return ""
+    return source[node.start_byte:node.end_byte].decode("utf-8", errors="ignore").strip()
 
 
 def save_graph(graph: ContextGraph, path: str) -> None:

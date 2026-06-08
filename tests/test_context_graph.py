@@ -101,3 +101,97 @@ def test_loaded_graph_preserves_importers():
         loaded = load_graph(str(cache_path))
         assert loaded is not None
         assert "src/a.js" in loaded.find_usages("src/b.js")
+
+
+# ── tree-sitter AST graph tests ──────────────────────────────────────────────
+from pathlib import Path as _CGPath
+
+
+def _cgw(path: _CGPath, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+_REACT_INDEX = """\
+import { OrderList } from './components/OrderList';
+import { useAuth } from './hooks/useAuth';
+
+export default function App() {
+  return null;
+}
+"""
+
+_ORDER_LIST = """\
+import React from 'react';
+export function OrderList({ userId }) {
+  return null;
+}
+export const OrderCard = () => null;
+"""
+
+_VUE_APP = """\
+<template>
+  <div>{{ count }}</div>
+</template>
+
+<script setup lang="ts">
+import { useCounter } from './composables/useCounter';
+const { count } = useCounter();
+</script>
+"""
+
+_USE_COUNTER = """\
+import { ref } from 'vue';
+export function useCounter() {
+  const count = ref(0);
+  return { count };
+}
+"""
+
+
+def test_build_graph_ast_finds_exports(tmp_path):
+    _cgw(tmp_path / "components" / "OrderList.tsx", _ORDER_LIST)
+    from phases.context_graph import build_graph
+    graph = build_graph(str(tmp_path))
+    node_ids = list(graph.nodes.keys())
+    assert any("OrderList" in nid for nid in node_ids)
+
+
+def test_build_graph_ast_resolves_relative_imports(tmp_path):
+    _cgw(tmp_path / "index.tsx", _REACT_INDEX)
+    _cgw(tmp_path / "components" / "OrderList.tsx", _ORDER_LIST)
+    from phases.context_graph import build_graph
+    graph = build_graph(str(tmp_path))
+    assert any(
+        "index.tsx" in e.source and "OrderList" in e.target and e.edge_type == "imports"
+        for e in graph.edges
+    )
+
+
+def test_build_graph_ast_vue_sfc_imports(tmp_path):
+    _cgw(tmp_path / "App.vue", _VUE_APP)
+    _cgw(tmp_path / "composables" / "useCounter.ts", _USE_COUNTER)
+    from phases.context_graph import build_graph
+    graph = build_graph(str(tmp_path))
+    assert any(
+        "App.vue" in e.source and "useCounter" in e.target and e.edge_type == "imports"
+        for e in graph.edges
+    )
+
+
+def test_build_graph_ast_hook_export_type(tmp_path):
+    _cgw(tmp_path / "composables" / "useCounter.ts", _USE_COUNTER)
+    from phases.context_graph import build_graph
+    graph = build_graph(str(tmp_path))
+    hook_nodes = [n for n in graph.nodes.values() if n.name == "useCounter"]
+    assert hook_nodes
+    assert hook_nodes[0].node_type == "hook"
+
+
+def test_build_graph_ast_component_export_type(tmp_path):
+    _cgw(tmp_path / "components" / "OrderList.tsx", _ORDER_LIST)
+    from phases.context_graph import build_graph
+    graph = build_graph(str(tmp_path))
+    comp_nodes = [n for n in graph.nodes.values() if n.name == "OrderList"]
+    assert comp_nodes
+    assert comp_nodes[0].node_type == "component"
