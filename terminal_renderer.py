@@ -1,7 +1,7 @@
 from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     from reporter import ReviewReport
@@ -71,11 +71,108 @@ def _count_risks(report: "ReviewReport") -> tuple[int, int, int]:
     return high, medium, low
 
 
-# ── Stubs for Tasks 4-6 (will be replaced) ──────────────────────────────────
+# ── Checkpoint matrix (Task 4) ────────────────────────────────────────────────
 
-def build_checkpoints(report: "ReviewReport") -> object:
-    """Stub — implemented in Task 4."""
-    return None
+CHECKPOINTS = [
+    ("请求上下文", ["header", "request", "context", "userid", "token", "cookie"]),
+    ("状态同步",   ["store", "state", "sync", "init", "初始化", "持久化"]),
+    ("页面跳转",   ["router", "redirect", "navigate", "跳转", "回首页"]),
+    ("异常处理",   ["loading", "error", "catch", "exception", "失败", "恢复"]),
+    ("权限/登录态", ["auth", "permission", "login", "logout", "权限", "登录"]),
+    ("测试覆盖",   ["test", "spec", "assert", "断言", "覆盖"]),
+    ("类型/空值",  ["null", "undefined", "type", "类型", "空值"]),
+    ("样式/布局",  ["css", "style", "layout", "class", "样式"]),
+    ("性能/重复请求", ["debounce", "throttle", "duplicate", "重复", "防抖"]),
+]
+
+_RISK_ORDER = {"high": 3, "medium": 2, "low": 1}
+
+
+@dataclass
+class CheckpointResult:
+    name: str
+    status: str    # "high" | "medium" | "low" | "ok"
+    reason: str    # main risk description or "未发现明显风险"
+    evidence: str  # file:line or "-"
+    fix_mode: str  # "manual" | "assist" | "auto" | "-"
+
+
+def _item_text(item) -> str:
+    """Return searchable text for an item (reason + description/evidence)."""
+    parts = [
+        getattr(item, "reason", ""),
+        getattr(item, "description", ""),
+        getattr(item, "evidence", ""),
+    ]
+    return " ".join(p for p in parts if p).lower()
+
+
+def _derive_fix_mode(item) -> str:
+    """Derive fix_mode from item attributes using FixCandidate rules."""
+    needs_human = getattr(item, "needs_human_review", False)
+    issue_type = getattr(item, "issue_type", None)
+    reason = getattr(item, "reason", "").lower()
+
+    if needs_human:
+        return "manual"
+
+    if issue_type == "missing_error_handling":
+        # auto only when no auth keywords in reason
+        auth_keywords = {"auth", "permission", "login", "logout", "权限", "登录"}
+        if not any(kw in reason for kw in auth_keywords):
+            return "auto"
+        return "manual"
+
+    if issue_type in ("redundant", "dead_code"):
+        return "auto"
+
+    # blast item with needs_human_review=False (already covered above for True)
+    if hasattr(item, "needs_human_review"):
+        return "assist"
+
+    return "manual"
+
+
+def build_checkpoints(report: "ReviewReport") -> List[CheckpointResult]:
+    """Build the checkpoint hit matrix from report items."""
+    all_items = (
+        list(report.blast_radius_items)
+        + list(report.code_quality_items)
+        + list(report.backend_review_items)
+    )
+
+    results: List[CheckpointResult] = []
+    for name, keywords in CHECKPOINTS:
+        matching = [
+            item for item in all_items
+            if any(kw in _item_text(item) for kw in keywords)
+        ]
+
+        if not matching:
+            results.append(CheckpointResult(
+                name=name,
+                status="ok",
+                reason="未发现明显风险",
+                evidence="-",
+                fix_mode="-",
+            ))
+            continue
+
+        # Pick highest-risk representative item
+        best = max(matching, key=lambda i: _RISK_ORDER.get(getattr(i, "risk", "low"), 0))
+
+        raw_reason = getattr(best, "reason", None) or getattr(best, "description", "")
+        truncated_reason = raw_reason[:60]
+
+        results.append(CheckpointResult(
+            name=name,
+            status=best.risk,
+            reason=truncated_reason,
+            evidence=f"{best.file}:{best.line}",
+            fix_mode=_derive_fix_mode(best),
+        ))
+
+    return results
 
 
 def build_business_tree(report: "ReviewReport") -> object:
@@ -166,10 +263,34 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
     console.print()
 
     if not quiet:
-        # Checkpoint matrix (Task 4 stub)
+        # Checkpoint matrix
+        checkpoints = build_checkpoints(report)
+        if checkpoints:
+            console.print("[bold]🔍 审查点命中[/bold]")
+            tbl = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+            tbl.add_column("审查点", style="bold", min_width=10)
+            tbl.add_column("状态", min_width=6)
+            tbl.add_column("风险说明", min_width=20, max_width=50)
+            tbl.add_column("证据", min_width=12)
+            tbl.add_column("修复方式", min_width=8)
+            for cp in checkpoints:
+                status_str, status_style = {
+                    "high":   ("🚨 high",   "red"),
+                    "medium": ("⚠️ medium", "yellow"),
+                    "low":    ("💡 low",    "blue"),
+                    "ok":     ("✅ ok",     "green"),
+                }.get(cp.status, (cp.status, ""))
+                tbl.add_row(
+                    cp.name,
+                    Text(status_str, style=status_style),
+                    cp.reason,
+                    cp.evidence,
+                    cp.fix_mode,
+                )
+            console.print(tbl)
+            console.print()
         # Business tree (Task 5 stub)
         # Fix queue (Task 6 stub)
-        pass
 
     # Footer
     if runtime.report_path:

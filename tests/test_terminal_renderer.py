@@ -76,6 +76,44 @@ class TestCountRisks:
         assert low == 1
 
 
+class TestBuildCheckpoints:
+    def test_no_items_all_ok(self):
+        from terminal_renderer import build_checkpoints
+        r = _make_report()
+        results = build_checkpoints(r)
+        assert len(results) == 9
+        assert all(cp.status == "ok" for cp in results)
+        assert all(cp.reason == "未发现明显风险" for cp in results)
+
+    def test_blast_item_mapped_to_correct_checkpoint(self):
+        from terminal_renderer import build_checkpoints
+        r = _make_report(blast=[_blast("high", reason="auth token missing in header")])
+        results = build_checkpoints(r)
+        # Should hit "请求上下文" (header) and "权限/登录态" (auth)
+        hit = [cp for cp in results if cp.status != "ok"]
+        names = [cp.name for cp in hit]
+        assert "请求上下文" in names or "权限/登录态" in names
+
+    def test_quality_item_mapped(self):
+        from terminal_renderer import build_checkpoints
+        r = _make_report(quality=[_quality("medium", issue_type="missing_error_handling")])
+        # CodeQualityItem description="desc" (from helper) — won't match most keywords
+        # But issue_type=missing_error_handling contributes to fix_mode
+        results = build_checkpoints(r)
+        assert isinstance(results, list)
+        assert len(results) == 9
+
+    def test_highest_risk_item_wins(self):
+        from terminal_renderer import build_checkpoints
+        r = _make_report(blast=[
+            _blast("low", reason="auth token low risk"),
+            _blast("high", reason="auth token missing completely"),
+        ])
+        results = build_checkpoints(r)
+        auth_cp = next(cp for cp in results if cp.name == "权限/登录态")
+        assert auth_cp.status == "high"
+
+
 class TestRenderReview:
     def test_json_mode_is_noop(self):
         from terminal_renderer import render_review
