@@ -51,7 +51,7 @@ def generate_fix(
     if cfg is None:
         return None
 
-    from api_client import call_llm
+    from api_client import call_claude as call_llm
 
     system_prompt = (
         "你是代码修复助手。只修复指定的一处问题，最小改动，"

@@ -21,7 +21,10 @@ def _call_anthropic(system_prompt: str, user_prompt: str, config: Config) -> str
 
 
 def _call_openai(system_prompt: str, user_prompt: str, config: Config) -> str:
-    client = OpenAI(api_key=config.api.api_key)
+    kwargs = {"api_key": config.api.api_key}
+    if config.api.base_url:
+        kwargs["base_url"] = config.api.base_url
+    client = OpenAI(**kwargs)
     response = client.chat.completions.create(
         model=config.api.model,
         max_tokens=4096,
@@ -30,4 +33,7 @@ def _call_openai(system_prompt: str, user_prompt: str, config: Config) -> str:
             {"role": "user", "content": user_prompt},
         ],
     )
+    # Some proxy endpoints return content directly as a string
+    if isinstance(response, str):
+        return response
     return response.choices[0].message.content
