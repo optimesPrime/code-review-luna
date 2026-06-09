@@ -85,10 +85,19 @@ def test_apply_patch_returns_false_for_bad_patch(tmp_path):
     assert result is False
 
 
-def test_generate_fix_returns_none_for_manual_mode():
+def test_generate_fix_returns_none_tuple_for_manual_mode():
     from luna_fix import generate_fix
     fc = _make_candidate(mode="manual")
-    assert generate_fix(fc, "some source", cfg=None) is None
+    patch, raw = generate_fix(fc, "some source", cfg=None)
+    assert patch is None
+    assert raw is None
+
+
+def test_generate_fix_returns_none_patch_when_cfg_missing():
+    from luna_fix import generate_fix
+    fc = _make_candidate(mode="auto")
+    patch, raw = generate_fix(fc, "some source", cfg=None)
+    assert patch is None
 
 
 # ── Task 3 ────────────────────────────────────────────────────────────────────

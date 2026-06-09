@@ -401,10 +401,15 @@ def fix_cmd(fix_id, preview, reports_dir, config_path):
         click.echo(f"无法读取文件：{candidate.file}", err=True)
         raise SystemExit(1)
 
-    patch = generate_fix(candidate, source, cfg)
+    patch, raw = generate_fix(candidate, source, cfg)
+
     if not patch:
-        click.echo("LLM 未能生成有效 diff，请手动处理。", err=True)
-        raise SystemExit(1)
+        if raw:
+            click.echo(f"\n💡 LLM 建议（未能生成可直接应用的 diff）：\n")
+            click.echo(raw)
+        else:
+            click.echo("LLM 调用失败，请检查网络或 API 配置。", err=True)
+        return
 
     # Show diff preview
     try:

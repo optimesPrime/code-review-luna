@@ -39,23 +39,25 @@ def generate_fix(
     candidate: "FixCandidate",
     source: str,
     cfg: "Config | None",
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """Call LLM to generate a unified diff for the given fix candidate.
 
-    Returns None for manual-mode candidates (no code change possible).
-    Returns the patch string on success, or None if LLM fails.
+    Returns (patch, raw_response):
+    - patch: unified diff string if extraction succeeded, else None
+    - raw_response: the full LLM response text, or None if LLM failed/skipped
     """
     if candidate.mode == "manual":
-        return None
+        return None, None
 
     if cfg is None:
-        return None
+        return None, None
 
     from api_client import call_claude as call_llm
 
     system_prompt = (
-        "你是代码修复助手。只修复指定的一处问题，最小改动，"
-        "输出标准 unified diff 格式（--- a/file、+++ b/file、@@ 行号 @@）。"
+        "你是代码修复助手。只修复指定的一处问题，最小改动。\n"
+        "优先输出标准 unified diff 格式（以 ```diff 代码块包裹）。\n"
+        "如果无法生成 diff，直接给出修改后的完整代码片段，并说明在哪一行修改。\n"
         "不做其它重构，不改变无关代码。"
     )
     user_prompt = (
@@ -67,11 +69,12 @@ def generate_fix(
     )
 
     try:
-        response = call_llm(system_prompt, user_prompt, cfg)
-    except Exception:
-        return None
+        raw = call_llm(system_prompt, user_prompt, cfg)
+    except Exception as e:
+        return None, f"LLM 调用失败：{e}"
 
-    return _extract_patch(response)
+    patch = _extract_patch(raw)
+    return patch, raw
 
 
 def apply_patch(patch: str, project_root: str) -> bool:
