@@ -70,7 +70,9 @@ def _should_run_backend_review(diff: str, cfg) -> bool:
     if not cfg.backend.enabled:
         return False
     if cfg.review.project_type == "auto":
-        from phases.backend_adapter_registry import detect_backend_languages_from_diff
+        from phases.backend_adapter_registry import detect_backend_languages_from_diff, is_frontend_only_diff
+        if is_frontend_only_diff(diff):
+            return False
         enabled = {l.lower() for l in cfg.backend.languages}
         return bool(set(detect_backend_languages_from_diff(diff)) & enabled)
     return should_run_backend_review(
@@ -361,6 +363,67 @@ def switch(config_path):
     if base_url:
         click.echo(f"中转地址：{base_url}")
     click.echo(f"API Key 环境变量：{info['api_key_env']}")
+
+
+@cli.command("fix")
+@click.argument("fix_id", type=int)
+@click.option("--preview", is_flag=True, help="只展示 diff，不写入文件")
+@click.option("--reports-dir", default=None, help="报告目录（默认读配置）")
+@click.option("--config", "config_path", default=None)
+def fix_cmd(fix_id, preview, reports_dir, config_path):
+    """应用修复队列中的第 N 条建议。"""
+    from luna_fix import load_latest_report, generate_fix, apply_patch
+
+    try:
+        cfg = load_config(config_path)
+    except Exception:
+        cfg = None
+    rdir = reports_dir or (cfg.reports.output_dir if cfg else ".luna-reports")
+
+    candidates = load_latest_report(rdir)
+    if candidates is None:
+        click.echo("未找到审查报告。请先运行 luna --staged 生成报告。", err=True)
+        raise SystemExit(1)
+
+    candidate = next((c for c in candidates if c.id == fix_id), None)
+    if candidate is None:
+        click.echo(f"未找到修复项 #{fix_id}。运行 luna 查看修复队列。", err=True)
+        raise SystemExit(1)
+
+    if candidate.mode == "manual":
+        click.echo(f"👤 #{fix_id} 需人工处理 — {candidate.title}")
+        click.echo(f"   证据：{candidate.evidence}")
+        click.echo(f"   建议：{candidate.suggestion}")
+        return
+
+    try:
+        source = (Path(".") / candidate.file).read_text(encoding="utf-8")
+    except OSError:
+        click.echo(f"无法读取文件：{candidate.file}", err=True)
+        raise SystemExit(1)
+
+    patch = generate_fix(candidate, source, cfg)
+    if not patch:
+        click.echo("LLM 未能生成有效 diff，请手动处理。", err=True)
+        raise SystemExit(1)
+
+    # Show diff preview
+    try:
+        from rich.syntax import Syntax
+        from rich.console import Console
+        Console(stderr=True).print(Syntax(patch, "diff", theme="monokai"))
+    except Exception:
+        click.echo(patch)
+
+    if preview:
+        return
+
+    if confirmer.ask("应用此修改？", default=False):
+        if apply_patch(patch, "."):
+            click.echo(f"✅ 已写入 {candidate.file}")
+        else:
+            click.echo("❌ 应用失败，请手动处理。", err=True)
+            raise SystemExit(1)
 
 
 def main():

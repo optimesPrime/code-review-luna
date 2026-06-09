@@ -89,3 +89,27 @@ def test_generate_fix_returns_none_for_manual_mode():
     from luna_fix import generate_fix
     fc = _make_candidate(mode="manual")
     assert generate_fix(fc, "some source", cfg=None) is None
+
+
+# ── Task 3 ────────────────────────────────────────────────────────────────────
+
+def test_fix_cmd_unknown_id_exits_1(tmp_path):
+    from click.testing import CliRunner
+    from luna import fix_cmd
+    data = {"fix_candidates": [dataclasses.asdict(_make_candidate(id=1))]}
+    (tmp_path / "latest.json").write_text(json.dumps(data), encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(fix_cmd, ["99", "--reports-dir", str(tmp_path)])
+    assert result.exit_code == 1
+
+
+def test_fix_cmd_manual_mode_prints_evidence(tmp_path):
+    from click.testing import CliRunner
+    from luna import fix_cmd
+    fc = _make_candidate(id=1, mode="manual", evidence="catch 块未恢复 loading")
+    data = {"fix_candidates": [dataclasses.asdict(fc)]}
+    (tmp_path / "latest.json").write_text(json.dumps(data), encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(fix_cmd, ["1", "--reports-dir", str(tmp_path)])
+    assert "人工" in result.output or "manual" in result.output.lower()
+    assert result.exit_code == 0
