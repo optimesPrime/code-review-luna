@@ -374,7 +374,7 @@ def fix_cmd(fix_id, preview, reports_dir, config_path):
     from luna_fix import load_latest_report, generate_fix, apply_patch
 
     try:
-        cfg = load_config(config_path)
+        cfg = load_config(str(config_path or DEFAULT_CONFIG))
     except Exception:
         cfg = None
     rdir = reports_dir or (cfg.reports.output_dir if cfg else ".luna-reports")
