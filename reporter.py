@@ -112,9 +112,20 @@ def render(report: ReviewReport) -> str:
 
 
 def save(report: ReviewReport, output_dir: str) -> str:
+    import dataclasses
+    import json
     d = Path(output_dir)
     d.mkdir(parents=True, exist_ok=True)
     safe_ts = report.timestamp.replace(":", "").replace(" ", "_")
     path = d / f"{safe_ts}_report.md"
     path.write_text(render(report), encoding="utf-8")
+    latest = d / "latest.json"
+    latest.write_text(
+        json.dumps(
+            {"fix_candidates": [dataclasses.asdict(fc) for fc in report.fix_candidates]},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return str(path)

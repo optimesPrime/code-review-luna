@@ -103,6 +103,26 @@ def test_fix_cmd_unknown_id_exits_1(tmp_path):
     assert result.exit_code == 1
 
 
+# ── Task 5 ────────────────────────────────────────────────────────────────────
+
+def test_save_writes_latest_json(tmp_path):
+    from reporter import ReviewReport, save
+    from terminal_renderer import FixCandidate
+    import dataclasses
+
+    fc = _make_candidate(id=1)
+    report = ReviewReport(timestamp="2026-01-01 12:00:00", diff_summary="test")
+    report.fix_candidates = [fc]
+    save(report, str(tmp_path))
+
+    latest = tmp_path / "latest.json"
+    assert latest.exists()
+    data = json.loads(latest.read_text(encoding="utf-8"))
+    assert "fix_candidates" in data
+    assert len(data["fix_candidates"]) == 1
+    assert data["fix_candidates"][0]["file"] == "src/Login.vue"
+
+
 # ── Task 4 ────────────────────────────────────────────────────────────────────
 
 def test_render_diff_preview_outputs_to_stderr(capsys):
