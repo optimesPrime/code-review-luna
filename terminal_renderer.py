@@ -256,6 +256,10 @@ class FixCandidate:
     reason: str
     command_hint: str
     impact: str     # "阻塞" | "高价值" | "建议" | "延后"
+    file: str = ""
+    line: int = 0
+    evidence: str = ""
+    suggestion: str = ""
 
 
 def build_explosion_map(report: "ReviewReport"):
@@ -421,6 +425,10 @@ def build_fix_queue(report: "ReviewReport") -> list:
             reason=reason,
             command_hint=cmd,
             impact=impact,
+            file=item.file,
+            line=item.line,
+            evidence=getattr(item, "evidence", ""),
+            suggestion=getattr(item, "suggestion", "") or "",
         ))
         counter += 1
 
