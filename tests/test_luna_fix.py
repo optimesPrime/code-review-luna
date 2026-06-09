@@ -77,10 +77,32 @@ def test_apply_patch_writes_file(tmp_path):
     assert "line2b" in target.read_text(encoding="utf-8")
 
 
-def test_apply_patch_returns_false_for_bad_patch(tmp_path):
+def test_apply_patch_wrong_line_number_still_works(tmp_path):
+    """apply_patch should succeed even if LLM gave wrong line number."""
+    from luna_fix import apply_patch
+    target = tmp_path / "src" / "Login.vue"
+    target.parent.mkdir()
+    target.write_text("line1\nline2\nline3\n", encoding="utf-8")
+
+    # Line number says 99 but content is actually at line 1
+    patch = (
+        "--- a/src/Login.vue\n"
+        "+++ b/src/Login.vue\n"
+        "@@ -99,3 +99,4 @@\n"
+        " line1\n"
+        " line2\n"
+        "+line2b\n"
+        " line3\n"
+    )
+    result = apply_patch(patch, str(tmp_path))
+    assert result is True
+    assert "line2b" in target.read_text(encoding="utf-8")
+
+
+def test_apply_patch_returns_false_when_content_not_found(tmp_path):
     from luna_fix import apply_patch
     (tmp_path / "f.py").write_text("hello\n", encoding="utf-8")
-    bad_patch = "--- a/f.py\n+++ b/f.py\n@@ -99,1 +99,2 @@\n missing context\n"
+    bad_patch = "--- a/f.py\n+++ b/f.py\n@@ -1,1 +1,2 @@\n nonexistent content line\n"
     result = apply_patch(bad_patch, str(tmp_path))
     assert result is False
 

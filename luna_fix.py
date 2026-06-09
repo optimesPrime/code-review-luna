@@ -80,7 +80,9 @@ def generate_fix(
 def apply_patch(patch: str, project_root: str) -> bool:
     """Apply a unified diff patch to files under project_root.
 
-    Pure Python implementation — no dependency on the system `patch` command.
+    Uses content-based matching instead of trusting LLM-generated line numbers,
+    which are often wrong. Searches the file for the context+removal lines and
+    applies the change at the first matching location.
     Returns True on success, False if patch cannot be applied cleanly.
     """
     root = Path(project_root)
@@ -98,25 +100,28 @@ def apply_patch(patch: str, project_root: str) -> bool:
         except OSError:
             return False
 
-        for hunk_start, removals, additions in file_hunks:
-            # hunk_start is 1-based; convert to 0-based index
-            idx = hunk_start - 1
-            # Verify context + removal lines match
-            expected = [l for l in removals if not l.startswith("+")]
-            actual = lines[idx: idx + len(expected)]
-            actual_stripped = [l.rstrip("\n") for l in actual]
-            expected_stripped = [l[1:].rstrip("\n") if l.startswith(" ") else l[1:].rstrip("\n") for l in expected]
-            if actual_stripped != expected_stripped:
+        for _hunk_start, removals, additions in file_hunks:
+            # Extract the removal side (context lines + lines to remove), strip prefix
+            removal_side = [l[1:].rstrip("\r\n") for l in removals if not l.startswith("+")]
+            if not removal_side:
+                continue
+
+            # Search for removal_side in the file (content-based, ignore line numbers)
+            idx = _find_block(lines, removal_side)
+            if idx is None:
                 return False
-            # Count lines to remove (context + removed)
-            remove_count = sum(1 for l in removals if not l.startswith("+"))
+
+            # Build replacement lines from the addition side
             new_lines = []
             for l in additions:
                 if l.startswith("+"):
-                    new_lines.append(l[1:] if l[1:].endswith("\n") else l[1:] + "\n")
+                    content = l[1:]
+                    new_lines.append(content if content.endswith("\n") else content + "\n")
                 elif l.startswith(" "):
-                    new_lines.append(l[1:] if l[1:].endswith("\n") else l[1:] + "\n")
-            lines[idx: idx + remove_count] = new_lines
+                    content = l[1:]
+                    new_lines.append(content if content.endswith("\n") else content + "\n")
+
+            lines[idx: idx + len(removal_side)] = new_lines
 
         try:
             abs_path.write_text("".join(lines), encoding="utf-8")
@@ -127,6 +132,23 @@ def apply_patch(patch: str, project_root: str) -> bool:
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
+
+def _find_block(lines: list[str], block: list[str]) -> int | None:
+    """Find the first position in `lines` where `block` matches (content-based).
+
+    Comparison strips trailing whitespace on both sides to tolerate minor
+    differences in indentation/CRLF that LLMs sometimes introduce.
+    Returns the 0-based start index, or None if not found.
+    """
+    if not block:
+        return None
+    block_stripped = [l.rstrip() for l in block]
+    for i in range(len(lines) - len(block) + 1):
+        window = [lines[i + j].rstrip("\r\n").rstrip() for j in range(len(block))]
+        if window == block_stripped:
+            return i
+    return None
+
 
 def _extract_patch(text: str) -> str | None:
     """Extract unified diff from LLM response (inside ```diff block or raw)."""
