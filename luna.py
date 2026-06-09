@@ -422,7 +422,7 @@ def fix_cmd(fix_id, preview, reports_dir, config_path):
     if preview:
         return
 
-    if confirmer.ask("应用此修改？", default=False):
+    if ask("应用此修改？", default=False):
         if apply_patch(patch, "."):
             click.echo(f"✅ 已写入 {candidate.file}")
         else:
