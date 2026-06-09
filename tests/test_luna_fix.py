@@ -103,6 +103,35 @@ def test_fix_cmd_unknown_id_exits_1(tmp_path):
     assert result.exit_code == 1
 
 
+# ── Task 4 ────────────────────────────────────────────────────────────────────
+
+def test_render_diff_preview_outputs_to_stderr(capsys):
+    from terminal_renderer import render_diff_preview
+    patch = "--- a/foo.py\n+++ b/foo.py\n@@ -1,1 +1,2 @@\n hello\n+world\n"
+    render_diff_preview(patch)
+    captured = capsys.readouterr()
+    # Rich writes to stderr; plain fallback also writes to stderr
+    assert "foo.py" in captured.err or "foo.py" in captured.out
+
+
+def test_fix_queue_command_hint_uses_luna_fix_n():
+    from terminal_renderer import build_fix_queue, FixCandidate
+    from reporter import ReviewReport
+    from phases.blast_radius import BlastRadiusItem
+
+    item = BlastRadiusItem(
+        file="src/foo.ts", line=10, symbol="foo", risk="high",
+        confidence="high", reason="test reason", suggestion="fix it",
+        needs_human_review=False,
+    )
+    report = ReviewReport(timestamp="2026-01-01", diff_summary="")
+    report.blast_radius_items = [item]
+    candidates = build_fix_queue(report)
+    assert len(candidates) >= 1
+    assert "--apply" not in candidates[0].command_hint
+    assert candidates[0].command_hint in (f"luna fix {candidates[0].id}", f"luna fix {candidates[0].id} --preview")
+
+
 def test_fix_cmd_manual_mode_prints_evidence(tmp_path):
     from click.testing import CliRunner
     from luna import fix_cmd

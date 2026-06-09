@@ -416,7 +416,7 @@ def build_fix_queue(report: "ReviewReport") -> list:
         mode, impact = _classify_fix_candidate(item)
         title = getattr(item, "reason", None) or getattr(item, "description", "")
         reason = f"{item.file}:{item.line}"
-        cmd = {"auto": f"luna fix {counter} --apply", "assist": f"luna fix {counter} --preview"}.get(mode, f"luna detail {counter}")
+        cmd = {"auto": f"luna fix {counter}", "assist": f"luna fix {counter} --preview"}.get(mode, f"luna detail {counter}")
 
         candidates.append(FixCandidate(
             id=counter,
@@ -433,6 +433,17 @@ def build_fix_queue(report: "ReviewReport") -> list:
         counter += 1
 
     return candidates
+
+
+def render_diff_preview(patch: str) -> None:
+    """Print a syntax-highlighted unified diff to stderr using Rich."""
+    if not RICH_AVAILABLE:
+        import sys
+        print(patch, file=sys.stderr)
+        return
+    from rich.console import Console
+    from rich.syntax import Syntax
+    Console(stderr=True).print(Syntax(patch, "diff", theme="monokai", word_wrap=True))
 
 
 # ── Main render entry ─────────────────────────────────────────────────────────
