@@ -21,6 +21,12 @@ from phases.symbol_locator import extract_changed_symbols_from_diff
 from phases.context_graph import build_graph, load_graph, save_graph
 from phases.risk_propagation import propagate_risk
 from phases.context_pack import build_context_pack
+from phases.surprise_analyzer import (
+    find_surprising_edges,
+    find_untested_hotspots,
+    find_bridge_nodes_in_impact,
+    generate_review_questions,
+)
 from phases.backend_graph_engine import (
     find_symbols_from_diff as _engine_find_symbols,
     build_graph as _engine_build_graph,
@@ -233,6 +239,41 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
             )
             report.changed_symbols = [vars(s) if hasattr(s, '__dict__') else str(s) for s in symbols]
             report.impact_paths = [vars(p) if hasattr(p, '__dict__') else str(p) for p in impact_paths]
+
+            # Surprise scoring + review question generation
+            from collections import Counter as _Counter
+            import os as _os
+            _file_degree: dict[str, int] = _Counter()
+            for _e in graph.edges:
+                _file_degree[_e.source] += 1
+                _file_degree[_e.target] += 1
+            _graph_ctx = {
+                _f: {
+                    "community": _os.path.dirname(_f),
+                    "language": _f.rsplit(".", 1)[-1] if "." in _f else "",
+                    "degree": _file_degree.get(_f, 0),
+                    "is_test": "test" in _f.lower(),
+                }
+                for _f in _file_degree
+            }
+            _path_lists = [p.path for p in impact_paths]
+            _sym_dicts = [
+                {
+                    "symbol": s.symbol,
+                    "degree": _file_degree.get(s.file, 0),
+                    "is_test": "test" in s.file.lower(),
+                }
+                for s in symbols
+            ]
+            _surprise_edges = find_surprising_edges(_path_lists, _graph_ctx)
+            _hotspots = find_untested_hotspots(
+                _sym_dicts,
+                [f"{r.describe}: {r.it}" for r in related_tests],
+            )
+            _bridges = find_bridge_nodes_in_impact(_path_lists)
+            _questions = generate_review_questions(_surprise_edges, _hotspots, _bridges)
+            context_pack.review_questions = _questions
+            report.review_questions = _questions
         else:
             context_pack = None
 
