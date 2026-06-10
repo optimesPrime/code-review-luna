@@ -241,7 +241,7 @@ def generate_review_questions(
             break
         src = edge.source.split("/")[-1]  # 只取文件名
         tgt = edge.target.split("/")[-1]
-        reasons_str = "、".join(edge.reasons)
+        reasons_str = "、".join(edge.reasons) if edge.reasons else "跨边界"
         questions.append(
             f"{src} 调用了 {tgt}（{reasons_str}），这个跨边界依赖是有意的吗？"
         )
