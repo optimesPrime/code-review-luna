@@ -540,6 +540,23 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
             console.print(Rule(f"[dim]报告: {runtime.report_path}[/dim]", style="dim"))
         return
 
+    # ── 自动发现的审查关注点 ──────────────────────────────────────────────────
+    if report.review_questions:
+        lines = Text()
+        for i, q in enumerate(report.review_questions):
+            if i > 0:
+                lines.append("\n")
+            lines.append(f"• {q}")
+
+        questions_panel = Panel(
+            lines,
+            title="[bold yellow]🔍 自动发现的审查关注点[/bold yellow]",
+            border_style="yellow",
+            padding=(0, 2),
+        )
+        console.print(questions_panel)
+        console.print()
+
     # ── 审查点命中 ────────────────────────────────────────────────────────────
     checkpoints = build_checkpoints(report)
     hits  = [cp for cp in checkpoints if cp.status != "ok"]

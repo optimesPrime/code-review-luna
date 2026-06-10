@@ -248,3 +248,19 @@ class TestRenderReview:
             sys.stderr = old_stderr
         assert "Luna Review" in output
         assert "阻塞提交" in output or "建议修复后提交" in output or "可提交" in output
+
+    def test_render_review_questions_shows_panel(self):
+        from terminal_renderer import _render_rich, RICH_AVAILABLE
+        from runtime_context import RuntimeContext
+        import io
+        if not RICH_AVAILABLE:
+            pytest.skip("Rich not installed")
+        from rich.console import Console
+        r = _make_report()
+        r.review_questions = ["测试关注点1"]
+        rt = RuntimeContext()
+        buf = io.StringIO()
+        console = Console(file=buf, no_color=True, highlight=False)
+        _render_rich(console, r, rt, quiet=False)
+        output = buf.getvalue()
+        assert "测试关注点1" in output

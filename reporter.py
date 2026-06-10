@@ -21,6 +21,7 @@ class ReviewReport:
     fix_candidates: list = field(default_factory=list)
     impact_paths: list = field(default_factory=list)
     changed_symbols: list = field(default_factory=list)
+    review_questions: list[str] = field(default_factory=list)
 
 
 def _backend_section(items: list[BackendReviewItem]) -> str:
