@@ -5,6 +5,21 @@ import re
 from phases.backend_language_profiles import get_profile, supported_languages
 
 
+_FRONTEND_EXCLUSIVE_EXTS = {".vue", ".jsx", ".tsx"}
+_BACKEND_EXCLUSIVE_EXTS = {".cs", ".java", ".py", ".go", ".php", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
+
+
+def is_frontend_only_diff(diff: str) -> bool:
+    """Return True when the diff is clearly from a frontend-only project.
+
+    Heuristic: contains at least one frontend-exclusive extension (.vue, .jsx, .tsx)
+    and no backend-exclusive extensions (.cs, .java, .py, .go, .php, .cpp, …).
+    Pure .ts/.js files are treated as ambiguous (could be Node.js backend).
+    """
+    exts = set(re.findall(r" b/[^ \n]+(\.[A-Za-z0-9]+)", diff))
+    return bool(exts & _FRONTEND_EXCLUSIVE_EXTS) and not bool(exts & _BACKEND_EXCLUSIVE_EXTS)
+
+
 def detect_backend_languages_from_diff(diff: str) -> list[str]:
     extensions = set(re.findall(r" b/[^ \n]+(\.[A-Za-z0-9]+)", diff))
     detected: list[str] = []
