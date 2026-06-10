@@ -93,3 +93,56 @@ def test_score_threshold_marks_suspicious():
     edge = edges[0]
     assert edge.is_suspicious is True, f"Expected is_suspicious=True, got {edge.is_suspicious}"
     assert edge.score > 0.35, f"Expected score > 0.35, got {edge.score}"
+
+
+# ---------------------------------------------------------------------------
+# Rule 3 / 4 / 5 coverage
+# ---------------------------------------------------------------------------
+
+
+def test_edge_to_hub_rule():
+    """src degree=1, tgt degree=30, median=1 → should trigger edge-to-hub (+0.20)."""
+    source = "leaf/widget.py"
+    target = "core/hub.py"
+    # Two nodes: degrees [1, 30] → median = 15.5; 30 >= 15.5*3 = 46.5 → False
+    # To guarantee trigger: use three nodes so median stays low.
+    # degrees = [1, 1, 30] → median = 1; 30 >= 1*3 = 3 → True
+    graph_context = {
+        source: _ctx(degree=1),
+        target: _ctx(degree=30),
+        "other/helper.py": _ctx(degree=1),
+    }
+    score, reasons = compute_surprise_score(source, target, "CALLS", graph_context)
+    assert score >= 0.20, f"Expected score >= 0.20 for edge-to-hub, got {score}"
+    assert any("hub" in r.lower() for r in reasons), \
+        f"Expected an edge-to-hub reason, got: {reasons}"
+
+
+def test_cross_test_boundary_adds_score():
+    """src is_test=True, tgt is_test=False, edge_type=CALLS → should trigger +0.15."""
+    source = "tests/test_widget.py"
+    target = "src/widget.py"
+    graph_context = {
+        source: _ctx(is_test=True),
+        target: _ctx(is_test=False),
+    }
+    score, reasons = compute_surprise_score(source, target, "CALLS", graph_context)
+    assert score >= 0.15, f"Expected score >= 0.15 for cross-test-boundary, got {score}"
+    assert any("test" in r.lower() for r in reasons), \
+        f"Expected a cross-test-boundary reason, got: {reasons}"
+
+
+def test_bad_edge_type_adds_score():
+    """edge_type=CALLS with source_kind=Type → should trigger bad-edge-type (+0.15)."""
+    source = "models/user.py"
+    target = "services/user_service.py"
+    graph_context = {
+        source: _ctx(),
+        target: _ctx(),
+    }
+    score, reasons = compute_surprise_score(
+        source, target, "CALLS", graph_context, source_kind="Type"
+    )
+    assert score >= 0.15, f"Expected score >= 0.15 for bad-edge-type, got {score}"
+    assert any("bad" in r.lower() or "type" in r.lower() for r in reasons), \
+        f"Expected a bad-edge-type reason, got: {reasons}"

@@ -32,6 +32,7 @@ def compute_surprise_score(
     edge_type: str,
     graph_context: dict,  # {file: {"community": str, "language": str, "degree": int, "is_test": bool}}
     source_kind: str = "",
+    median_degree: float | None = None,
 ) -> tuple[float, list[str]]:
     """Compute the surprise score for a single directed edge.
 
@@ -42,6 +43,8 @@ def compute_surprise_score(
     edge_type:     e.g. "CALLS", "IMPORTS"
     graph_context: per-file metadata dict (missing files are handled gracefully)
     source_kind:   AST node kind for the source symbol, e.g. "Type", "Function"
+    median_degree: pre-computed median degree to avoid O(N) recomputation per edge;
+                   if None, computed lazily from graph_context (for standalone calls)
 
     Returns
     -------
@@ -84,20 +87,24 @@ def compute_surprise_score(
     src_degree = src_meta.get("degree")
     tgt_degree = tgt_meta.get("degree")
     if src_degree is not None and tgt_degree is not None:
-        # Compute median degree from all nodes in context that have degree info
-        degrees = [
-            v["degree"]
-            for v in graph_context.values()
-            if isinstance(v.get("degree"), (int, float))
-        ]
-        if len(degrees) >= 2:
-            median_deg = statistics.median(degrees)
-            if src_degree <= 2 and tgt_degree >= median_deg * 3:
-                score += 0.20
-                reasons.append(
-                    f"edge-to-hub: src_degree={src_degree}, tgt_degree={tgt_degree}, "
-                    f"median={median_deg}"
-                )
+        # Use pre-computed median_degree when available (avoids O(N) recomputation per edge);
+        # fall back to computing from graph_context when called standalone.
+        if median_degree is not None:
+            median_deg: float | None = median_degree
+        else:
+            degrees = [
+                v["degree"]
+                for v in graph_context.values()
+                if isinstance(v.get("degree"), (int, float))
+            ]
+            median_deg = statistics.median(degrees) if len(degrees) >= 2 else None
+
+        if median_deg is not None and src_degree <= 2 and tgt_degree >= median_deg * 3:
+            score += 0.20
+            reasons.append(
+                f"edge-to-hub: src_degree={src_degree}, tgt_degree={tgt_degree}, "
+                f"median={median_deg}"
+            )
 
     # --- Rule 4: Test boundary (+0.15) ---
     src_is_test = src_meta.get("is_test", False)
@@ -137,6 +144,10 @@ def find_surprising_edges(
     """
     seen: dict[tuple[str, str], SurpriseEdge] = {}
 
+    # Pre-compute median degree once — avoids O(E*N) recalculation inside the loop.
+    degrees = [v["degree"] for v in graph_context.values() if isinstance(v.get("degree"), (int, float))]
+    median_deg: float | None = statistics.median(degrees) if len(degrees) >= 2 else None
+
     for path in impact_paths:
         for i in range(len(path) - 1):
             src = path[i]
@@ -145,8 +156,10 @@ def find_surprising_edges(
             if key in seen:
                 continue  # deduplicate
 
+            # impact_paths 只含文件路径，无 edge metadata，统一视为 CALLS 边
             score, reasons = compute_surprise_score(
-                src, tgt, edge_type="CALLS", graph_context=graph_context
+                src, tgt, edge_type="CALLS", graph_context=graph_context,
+                median_degree=median_deg,
             )
             if score >= threshold:
                 seen[key] = SurpriseEdge(
