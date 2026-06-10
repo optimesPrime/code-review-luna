@@ -12,6 +12,7 @@ from phases.surprise_analyzer import (
     find_surprising_edges,
     find_untested_hotspots,
     find_bridge_nodes_in_impact,
+    generate_review_questions,
 )
 
 
@@ -210,3 +211,50 @@ def test_find_bridge_nodes_no_bridge():
     result = find_bridge_nodes_in_impact(paths)
     assert "x.py" not in result
     assert "y.py" not in result
+
+
+# ---------------------------------------------------------------------------
+# generate_review_questions tests
+# ---------------------------------------------------------------------------
+
+
+def test_generates_cross_module_question():
+    """surprise edge → 生成"是有意的吗"风格问题"""
+    edges = [
+        SurpriseEdge(
+            source="src/request.ts",
+            target="auth/auth.ts",
+            score=0.50,
+            reasons=["cross-module"],
+            is_suspicious=True,
+        )
+    ]
+    questions = generate_review_questions(edges, [], [])
+    assert len(questions) >= 1
+    assert any("request.ts" in q or "auth.ts" in q for q in questions)
+
+
+def test_generates_hotspot_question():
+    """untested hotspot → 生成"没有测试覆盖"问题"""
+    questions = generate_review_questions([], ["handleSubmit"], [])
+    assert any("handleSubmit" in q for q in questions)
+    assert any("测试" in q for q in questions)
+
+
+def test_max_questions_capped_at_7():
+    """信号很多时总问题数不超过 7"""
+    edges = [
+        SurpriseEdge(f"src/{i}.ts", f"tgt/{i}.py", score=0.5 + i * 0.01,
+                     reasons=["cross-module"], is_suspicious=True)
+        for i in range(10)
+    ]
+    hotspots = [f"sym{i}" for i in range(10)]
+    bridges = [f"bridge{i}.ts" for i in range(10)]
+    questions = generate_review_questions(edges, hotspots, bridges)
+    assert len(questions) <= 7
+
+
+def test_no_questions_for_empty_signals():
+    """没有信号时返回空列表"""
+    questions = generate_review_questions([], [], [])
+    assert questions == []

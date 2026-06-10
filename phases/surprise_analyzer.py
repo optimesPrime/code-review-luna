@@ -218,3 +218,45 @@ def find_bridge_nodes_in_impact(
             middle_node_paths.setdefault(node, set()).add(path_idx)
 
     return [node for node, path_indices in middle_node_paths.items() if len(path_indices) >= 2]
+
+
+def generate_review_questions(
+    surprise_edges: list[SurpriseEdge],
+    hotspots: list[str],           # 无测试的高频符号名
+    bridges: list[str],            # 桥接节点文件/节点名
+    max_questions: int = 7,
+) -> list[str]:
+    """把图分析信号翻译成中文审查问题。
+
+    优先级：surprise_score 高的边 → 无测试热点 → 桥接节点
+    每类最多 3 个，总上限 max_questions 个
+    问题用中文，包含具体文件名和行为描述
+    """
+    questions: list[str] = []
+
+    # 1. Surprise edges（按 score 降序，最多 3 个）
+    sorted_edges = sorted(surprise_edges, key=lambda e: e.score, reverse=True)
+    for edge in sorted_edges[:3]:
+        if len(questions) >= max_questions:
+            break
+        src = edge.source.split("/")[-1]  # 只取文件名
+        tgt = edge.target.split("/")[-1]
+        reasons_str = "、".join(edge.reasons)
+        questions.append(
+            f"{src} 调用了 {tgt}（{reasons_str}），这个跨边界依赖是有意的吗？"
+        )
+
+    # 2. Untested hotspots（最多 3 个）
+    for sym in hotspots[:3]:
+        if len(questions) >= max_questions:
+            break
+        questions.append(f"{sym} 有多个调用者但没有测试覆盖，是否需要补充测试？")
+
+    # 3. Bridge nodes（最多 3 个）
+    for node in bridges[:3]:
+        if len(questions) >= max_questions:
+            break
+        name = node.split("/")[-1]
+        questions.append(f"{name} 是多个模块的关键连接器，这次改动是否会影响其他模块？")
+
+    return questions[:max_questions]
