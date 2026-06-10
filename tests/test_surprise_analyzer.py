@@ -183,3 +183,30 @@ def test_bridge_node_single_connector():
     ]
     result = find_bridge_nodes_in_impact(impact_paths)
     assert "shared.py" in result
+
+
+# ---------------------------------------------------------------------------
+# Boundary tests — Task 2 additions
+# ---------------------------------------------------------------------------
+
+
+def test_find_untested_hotspots_empty_symbols():
+    assert find_untested_hotspots([], [], min_degree=5) == []
+
+
+def test_find_untested_hotspots_degree_boundary():
+    """degree 恰好等于 min_degree 时应纳入"""
+    symbols = [{"symbol": "foo", "degree": 5, "is_test": False}]
+    assert "foo" in find_untested_hotspots(symbols, [], min_degree=5)
+
+
+def test_find_bridge_nodes_empty_paths():
+    assert find_bridge_nodes_in_impact([]) == []
+
+
+def test_find_bridge_nodes_no_bridge():
+    """节点只出现在 1 条路径时不是桥接节点"""
+    paths = [["a.py", "x.py", "b.py"], ["c.py", "y.py", "d.py"]]
+    result = find_bridge_nodes_in_impact(paths)
+    assert "x.py" not in result
+    assert "y.py" not in result

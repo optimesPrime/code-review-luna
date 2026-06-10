@@ -182,13 +182,19 @@ def find_untested_hotspots(
 
     条件：degree >= min_degree 且 related_tests 为空 且 is_test=False。
     返回符号名列表。
+
+    设计说明：related_tests 非空时，整体视为有覆盖，直接返回空列表。
+    这是有意设计（非 bug）：图分析已在上游完成符号级关联，此处只做粗粒度判断。
+
+    注意：is_test 字段缺失时保守处理——跳过该符号，不纳入热点，
+    以避免将未知状态的测试文件误判为非测试代码。
     """
     if related_tests:
         return []
     return [
         sym["symbol"]
         for sym in changed_symbols
-        if not sym.get("is_test", False) and sym.get("degree", 0) >= min_degree
+        if not sym.get("is_test", True) and sym.get("degree", 0) >= min_degree
     ]
 
 
@@ -199,8 +205,11 @@ def find_bridge_nodes_in_impact(
 
     简化定义：出现在 >= 2 条不同路径上的中间节点（非首尾节点）即为桥接节点。
     去重后返回节点名列表。
+
+    注意：
+    - 路径长度 < 3 的路径将被整体忽略（中间节点为空，path[1:-1] 结果为空列表）。
+    - 返回列表顺序未保证（取决于 dict 迭代顺序，仅保证 Python 3.7+ 插入顺序）。
     """
-    from collections import Counter
 
     middle_node_paths: dict[str, set[int]] = {}
     for path_idx, path in enumerate(impact_paths):
