@@ -119,3 +119,29 @@ def test_analyze_without_context_pack_uses_fallback(monkeypatch):
          patch("phases.blast_radius.find_usages_in_project", return_value=""):
         items = analyze(diff, "", cfg)  # no context_pack
     assert items[0].file == "router/index.js"
+
+
+def test_blast_radius_prompt_contains_review_questions(monkeypatch):
+    """review_questions on ContextPack must appear in the system prompt sent to LLM."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    cfg = Config()
+
+    mock_pack = ContextPack(
+        changed_symbols=[],
+        impact_paths=[],
+        related_rules=[],
+        related_tests=[],
+        review_focus=[],
+        review_questions=["测试问题1"],
+    )
+
+    captured: dict = {}
+
+    def fake_call_claude(system: str, user: str, config: object) -> str:
+        captured["system"] = system
+        return "[]"
+
+    with patch("phases.blast_radius.call_claude", side_effect=fake_call_claude):
+        analyze("diff --git a/foo.js b/foo.js\n", "", cfg, context_pack=mock_pack)
+
+    assert "测试问题1" in captured["system"]

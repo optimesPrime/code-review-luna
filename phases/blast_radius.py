@@ -35,6 +35,7 @@ _SYSTEM_PROMPT = """\
 
 基于上下文包中的证据链评估风险。高风险低置信度项标注 needs_human_review=true。
 
+{review_questions_section}
 以 JSON 数组输出，每个元素包含：
 - file: 受影响文件路径（字符串）
 - line: 行号（整数）
@@ -107,7 +108,18 @@ def analyze(
             f"## 调用关系\n\n{usages or '（未找到外部调用）'}"
         )
 
-    system = _SYSTEM_PROMPT.format(skill_context=skill_context or "")
+    if context_pack and context_pack.review_questions:
+        rq = "\n".join(f"- {q}" for q in context_pack.review_questions)
+        review_questions_section = (
+            f"以下是基于代码图谱自动发现的审查关注点，请在审查时优先回应这些问题：\n{rq}\n\n"
+        )
+    else:
+        review_questions_section = ""
+
+    system = _SYSTEM_PROMPT.format(
+        skill_context=skill_context or "",
+        review_questions_section=review_questions_section,
+    )
     raw = call_claude(system, user, config)
 
     match = re.search(r"\[.*\]", raw, re.DOTALL)

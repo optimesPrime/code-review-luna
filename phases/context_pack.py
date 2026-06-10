@@ -12,6 +12,7 @@ class ContextPack:
     related_rules: list[str]
     related_tests: list[str]
     review_focus: list[str] = field(default_factory=list)
+    review_questions: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
