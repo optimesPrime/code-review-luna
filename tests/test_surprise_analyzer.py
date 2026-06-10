@@ -10,6 +10,8 @@ from phases.surprise_analyzer import (
     SurpriseEdge,
     compute_surprise_score,
     find_surprising_edges,
+    find_untested_hotspots,
+    find_bridge_nodes_in_impact,
 )
 
 
@@ -146,3 +148,38 @@ def test_bad_edge_type_adds_score():
     assert score >= 0.15, f"Expected score >= 0.15 for bad-edge-type, got {score}"
     assert any("bad" in r.lower() or "type" in r.lower() for r in reasons), \
         f"Expected a bad-edge-type reason, got: {reasons}"
+
+
+# ---------------------------------------------------------------------------
+# find_untested_hotspots tests
+# ---------------------------------------------------------------------------
+
+
+def test_hotspot_has_high_degree_no_tests():
+    """度数 >= 5，related_tests 为空 → 进热点列表"""
+    changed_symbols = [
+        {"symbol": "handleSubmit", "degree": 8, "is_test": False}
+    ]
+    related_tests = []
+    result = find_untested_hotspots(changed_symbols, related_tests, min_degree=5)
+    assert "handleSubmit" in result
+
+
+def test_hotspot_with_tests_not_flagged():
+    """有测试 → 不进热点列表"""
+    changed_symbols = [
+        {"symbol": "handleSubmit", "degree": 8, "is_test": False}
+    ]
+    related_tests = ["tests/test_form.py::test_handle_submit"]
+    result = find_untested_hotspots(changed_symbols, related_tests, min_degree=5)
+    assert "handleSubmit" not in result
+
+
+def test_bridge_node_single_connector():
+    """出现在 >= 2 条不同路径上的节点 → 进桥接列表"""
+    impact_paths = [
+        ["a.py", "shared.py", "b.py"],
+        ["c.py", "shared.py", "d.py"],
+    ]
+    result = find_bridge_nodes_in_impact(impact_paths)
+    assert "shared.py" in result

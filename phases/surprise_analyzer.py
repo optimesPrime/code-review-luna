@@ -171,3 +171,41 @@ def find_surprising_edges(
                 )
 
     return list(seen.values())
+
+
+def find_untested_hotspots(
+    changed_symbols: list[dict],   # 每个 dict 有 "symbol", "degree", "is_test" 字段
+    related_tests: list[str],       # 测试文件路径列表（非空即有覆盖）
+    min_degree: int = 5,
+) -> list[str]:
+    """找出高度数但无测试覆盖的符号。
+
+    条件：degree >= min_degree 且 related_tests 为空 且 is_test=False。
+    返回符号名列表。
+    """
+    if related_tests:
+        return []
+    return [
+        sym["symbol"]
+        for sym in changed_symbols
+        if not sym.get("is_test", False) and sym.get("degree", 0) >= min_degree
+    ]
+
+
+def find_bridge_nodes_in_impact(
+    impact_paths: list[list[str]],  # 每条路径是文件/节点名列表
+) -> list[str]:
+    """找出影响路径中的桥接节点。
+
+    简化定义：出现在 >= 2 条不同路径上的中间节点（非首尾节点）即为桥接节点。
+    去重后返回节点名列表。
+    """
+    from collections import Counter
+
+    middle_node_paths: dict[str, set[int]] = {}
+    for path_idx, path in enumerate(impact_paths):
+        # 中间节点：排除第一个和最后一个
+        for node in path[1:-1]:
+            middle_node_paths.setdefault(node, set()).add(path_idx)
+
+    return [node for node, path_indices in middle_node_paths.items() if len(path_indices) >= 2]
