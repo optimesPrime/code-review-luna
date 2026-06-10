@@ -129,11 +129,11 @@ def find_surprising_edges(
     ----------
     impact_paths: list of file-path lists; adjacent pairs form directed edges
     graph_context: per-file metadata (see compute_surprise_score)
-    threshold: score cutoff; edges with score > threshold are marked is_suspicious
+    threshold: score cutoff; edges with score >= threshold are marked is_suspicious
 
     Returns
     -------
-    List of SurpriseEdge objects whose score > threshold, deduplicated by (source, target).
+    List of SurpriseEdge objects whose score >= threshold, deduplicated by (source, target).
     """
     seen: dict[tuple[str, str], SurpriseEdge] = {}
 
@@ -148,7 +148,7 @@ def find_surprising_edges(
             score, reasons = compute_surprise_score(
                 src, tgt, edge_type="CALLS", graph_context=graph_context
             )
-            if score > threshold:
+            if score >= threshold:
                 seen[key] = SurpriseEdge(
                     source=src,
                     target=tgt,
