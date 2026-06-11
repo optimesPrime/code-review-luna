@@ -185,6 +185,15 @@ def test_build_graph_creates_db_file(tmp_path):
 # Task 5: schema migration
 # ---------------------------------------------------------------------------
 
+def test_fts5_index_populated_after_build(tmp_path):
+    """build() 之后 nodes_fts 里应能搜到导出的符号名。"""
+    _write_ts(tmp_path / "auth.ts", "export function handleLogin() {}\n")
+    db = GraphDB(str(tmp_path / "graph.db"))
+    db.build(str(tmp_path))
+    results = db.fts_search("handleLogin")
+    assert any("auth.ts" in r["file"] for r in results)
+
+
 def test_schema_version_mismatch_triggers_rebuild(tmp_path):
     db_path = str(tmp_path / "graph.db")
     # First build — version 1
@@ -201,6 +210,7 @@ def test_schema_version_mismatch_triggers_rebuild(tmp_path):
 
     # Reopening should detect mismatch and rebuild (no crash, fresh schema)
     db2 = GraphDB(db_path)
+    from phases.sqlite_graph import _CURRENT_VERSION
     version = db2._conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 1  # Reset to current version after rebuild
+    assert version == _CURRENT_VERSION  # 重建后版本号恢复为当前版本
     db2.close()

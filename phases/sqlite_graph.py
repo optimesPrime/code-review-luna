@@ -3,7 +3,7 @@ import hashlib
 import sqlite3
 from pathlib import Path
 
-_CURRENT_VERSION = 1
+_CURRENT_VERSION = 2  # v2: FTS5 节点索引（nodes_fts 回填）
 
 _SKIP_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__", ".cache", ".luna"}
 _SOURCE_EXTS = {".js", ".ts", ".jsx", ".tsx", ".vue"}
@@ -109,7 +109,10 @@ class GraphDB:
                 self._parse_and_insert(src, rel, root, fhash)
 
     def _parse_and_insert(self, src: Path, rel: str, root: Path, fhash: str) -> None:
-        # Remove stale data for this file
+        # Remove stale data for this file (including FTS5 index)
+        self._conn.execute(
+            "DELETE FROM nodes_fts WHERE rowid IN (SELECT rowid FROM nodes WHERE file=?)", (rel,)
+        )
         self._conn.execute("DELETE FROM nodes WHERE file=?", (rel,))
         self._conn.execute("DELETE FROM edges WHERE file=?", (rel,))
 
@@ -161,6 +164,13 @@ class GraphDB:
                 (fhash, rel),
             )
 
+        # Sync FTS5 index for this file's nodes
+        self._conn.execute(
+            "INSERT INTO nodes_fts(rowid, name, node_type, file) "
+            "SELECT rowid, name, node_type, file FROM nodes WHERE file=?",
+            (rel,),
+        )
+
     # ------------------------------------------------------------------
     # update (Task 2)
     # ------------------------------------------------------------------
@@ -181,6 +191,11 @@ class GraphDB:
             # Removed files
             for stored_file in list(stored_hashes):
                 if stored_file not in source_files:
+                    # Remove from FTS5 before deleting nodes
+                    self._conn.execute(
+                        "DELETE FROM nodes_fts WHERE rowid IN "
+                        "(SELECT rowid FROM nodes WHERE file=?)", (stored_file,)
+                    )
                     self._conn.execute("DELETE FROM nodes WHERE file=?", (stored_file,))
                     self._conn.execute("DELETE FROM edges WHERE file=?", (stored_file,))
             # New or changed files

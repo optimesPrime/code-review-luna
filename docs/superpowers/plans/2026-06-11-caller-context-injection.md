@@ -1,4 +1,4 @@
-# Caller Context Injection — 让 Luna 知道调用方怎么用
+# ✅ 已完成 · Caller Context Injection — 让 Luna 知道调用方怎么用
 
 **目标：** 给每个改动符号自动提取「调用点 + 周围代码片段」作为证据喂给 LLM，让 LLM 在判断"这个改动影响调用方吗"时有真凭实据，不再因信息不足而保守标 high。
 

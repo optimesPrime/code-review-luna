@@ -178,7 +178,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     if _run_backend:
         _phase_list += [("backend_graph", "构建后端代码图谱"), ("backend_review", "后端专项审查")]
     if _run_frontend:
-        _phase_list += [("frontend_graph", "构建前端代码图谱"), ("blast", "爆炸范围分析")]
+        _phase_list += [("frontend_graph", "构建前端代码图谱"), ("hybrid_ctx", "混合语义检索"), ("blast", "爆炸范围分析")]
     elif phase in (None, "blast"):
         _phase_list += [("blast", "爆炸范围分析")]
     if _run_quality:
@@ -326,6 +326,26 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
             _questions = generate_review_questions(_surprise_edges, _hotspots, _bridges)
             context_pack.review_questions = _questions
             report.review_questions = _questions
+
+            _begin("hybrid_ctx")
+            try:
+                from phases.sqlite_graph import GraphDB
+                from phases.hybrid_search import augment_impact_paths
+                _db_path = str(Path(".luna") / "cache" / "context-graph.db")
+                if Path(_db_path).exists():
+                    _hdb = GraphDB(_db_path)
+                    try:
+                        context_pack.impact_paths = augment_impact_paths(
+                            context_pack.impact_paths, _hdb, symbols,
+                            project_root=".",
+                        )
+                    finally:
+                        _hdb.close()
+            except Exception as _hybrid_err:
+                if _rcon:
+                    _rcon.print(f"[dim yellow]⚠ hybrid_ctx 降级：{_hybrid_err}[/dim yellow]")
+            finally:
+                _finish("hybrid_ctx")
         else:
             context_pack = None
 

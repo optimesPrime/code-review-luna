@@ -1,4 +1,4 @@
-# SQLite 图存储 — 替换 context_graph.py
+# ✅ 已完成 · SQLite 图存储 — 替换 context_graph.py
 
 **目标：** 用 SQLite 替换现有基于 JSON 文件的 `context_graph.py`，一次解决三个问题：增量缓存（文件变了才重解析）、BFS 性能（RECURSIVE CTE 替代 Python deque）、内存占用（按需查询替代全量反序列化）。
 
