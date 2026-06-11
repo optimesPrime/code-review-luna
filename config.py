@@ -59,6 +59,17 @@ class BackendConfig:
 
 
 @dataclass
+class MigrationConfig:
+    enabled: bool = True
+    use_llm: bool = False
+
+
+@dataclass
+class APIChangeConfig:
+    enabled: bool = True
+
+
+@dataclass
 class Config:
     api: APIConfig = field(default_factory=APIConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
@@ -66,6 +77,8 @@ class Config:
     reports: ReportsConfig = field(default_factory=ReportsConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     backend: BackendConfig = field(default_factory=BackendConfig)
+    migration: MigrationConfig = field(default_factory=MigrationConfig)
+    api_change: APIChangeConfig = field(default_factory=APIChangeConfig)
 
 
 def load_config(path: str = "config.yaml") -> Config:

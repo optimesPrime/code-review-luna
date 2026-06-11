@@ -50,7 +50,7 @@ def test_analyze_returns_blast_radius_items(monkeypatch):
     }])
     with patch("phases.blast_radius.call_claude", return_value=api_response), \
          patch("phases.blast_radius.find_usages_in_project", return_value=""):
-        items = analyze(SAMPLE_DIFF, "", cfg)
+        items, _ = analyze(SAMPLE_DIFF, "", cfg)
     assert len(items) == 1
     assert items[0].file == "router/index.js"
     assert items[0].risk == "high"
@@ -62,7 +62,7 @@ def test_analyze_returns_empty_on_invalid_json(monkeypatch):
     cfg = Config()
     with patch("phases.blast_radius.call_claude", return_value="无法分析"), \
          patch("phases.blast_radius.find_usages_in_project", return_value=""):
-        items = analyze(SAMPLE_DIFF, "", cfg)
+        items, _ = analyze(SAMPLE_DIFF, "", cfg)
     assert items == []
 
 
@@ -99,7 +99,7 @@ def test_analyze_with_context_pack(monkeypatch):
     }])
     diff = "diff --git a/src/stores/user.js b/src/stores/user.js\n"
     with patch("phases.blast_radius.call_claude", return_value=api_response):
-        items = analyze(diff, "", cfg, context_pack=pack)
+        items, _ = analyze(diff, "", cfg, context_pack=pack)
     assert len(items) == 1
     assert items[0].file == "src/utils/request.js"
     assert items[0].risk == "high"
@@ -117,7 +117,7 @@ def test_analyze_without_context_pack_uses_fallback(monkeypatch):
     diff = "diff --git a/src/useAuth.js b/src/useAuth.js\n+export function refreshToken() {}\n"
     with patch("phases.blast_radius.call_claude", return_value=api_response), \
          patch("phases.blast_radius.find_usages_in_project", return_value=""):
-        items = analyze(diff, "", cfg)  # no context_pack
+        items, _ = analyze(diff, "", cfg)  # no context_pack
     assert items[0].file == "router/index.js"
 
 

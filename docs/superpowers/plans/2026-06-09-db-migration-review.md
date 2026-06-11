@@ -1,4 +1,4 @@
-# 数据库迁移审查 — SQL / Migration 文件专项分析
+# 数据库迁移审查 — SQL / Migration 文件专项分析 ✅ 已完成
 
 **目标：** 自动检测 diff 中的数据库迁移文件变更，识别高风险操作（DROP、ADD NOT NULL、RENAME），无需 LLM 即可给出精确的风险判断，并在终端审查点矩阵中展示。
 

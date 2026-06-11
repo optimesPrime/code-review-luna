@@ -176,6 +176,47 @@ def build_checkpoints(report: "ReviewReport") -> List[CheckpointResult]:
             fix_mode=_derive_fix_mode(best),
         ))
 
+    # ── 数据库迁移专项 ────────────────────────────────────────────────────────
+    migration_items = list(getattr(report, "migration_items", []))
+    if not migration_items:
+        results.append(CheckpointResult(
+            name="数据库迁移", status="ok",
+            reason="无迁移文件变更", evidence="-", fix_mode="-",
+        ))
+    else:
+        best = max(migration_items, key=lambda i: _RISK_ORDER.get(getattr(i, "risk", "low"), 0))
+        results.append(CheckpointResult(
+            name="数据库迁移",
+            status=best.risk,
+            reason=best.reason,
+            evidence=f"{best.file}:{best.line}",
+            fix_mode="manual",
+        ))
+
+    # ── API 契约专项 ──────────────────────────────────────────────────────────
+    api_items = list(getattr(report, "api_change_items", []))
+    high_api = [i for i in api_items if i.risk == "high"]
+    if not api_items:
+        results.append(CheckpointResult(
+            name="API 契约", status="ok",
+            reason="无 API Schema 变更", evidence="-", fix_mode="-",
+        ))
+    elif not high_api:
+        results.append(CheckpointResult(
+            name="API 契约", status="low",
+            reason=f"{len(api_items)} 处 API 变更（均为低风险）",
+            evidence=api_items[0].file, fix_mode="-",
+        ))
+    else:
+        best_api = max(high_api, key=lambda i: _RISK_ORDER.get(i.risk, 0))
+        results.append(CheckpointResult(
+            name="API 契约",
+            status=best_api.risk,
+            reason=best_api.reason,
+            evidence=f"{best_api.file}:{best_api.line}",
+            fix_mode="manual",
+        ))
+
     return results
 
 
@@ -435,6 +476,43 @@ def build_fix_queue(report: "ReviewReport") -> list:
     return candidates
 
 
+def render_token_savings_panel(savings_per_phase: dict) -> str | None:
+    """Return a plain-text savings box, or None when there is nothing to show.
+
+    savings_per_phase: {"blast": {baseline, used, saved, saved_percent}, ...}
+    """
+    if not savings_per_phase:
+        return None
+
+    total_baseline = 0
+    total_used = 0
+    for phase_savings in savings_per_phase.values():
+        b = phase_savings.get("baseline", 0)
+        u = phase_savings.get("used", 0)
+        if b > 0:
+            total_baseline += b
+            total_used += u
+
+    if total_baseline <= 0:
+        return None
+
+    total_saved = max(0, total_baseline - total_used)
+    total_pct = round(total_saved * 100 / total_baseline)
+
+    inner_lines = [
+        f"如果直接传 diff：  {total_baseline:>10,} tokens",
+        f"实际使用：         {total_used:>10,} tokens",
+        f"节省：             {total_saved:>10,} tokens ({total_pct}%)",
+    ]
+    inner_w = max(len(s) for s in inner_lines) + 2
+    title = " Token 使用情况 "
+    dash = max(4, inner_w - len(title))
+    top = "┌" + "─" * (dash // 2) + title + "─" * (dash - dash // 2) + "┐"
+    bot = "└" + "─" * inner_w + "┘"
+    rows = [top] + [f"│ {s}{' ' * (inner_w - 2 - len(s))} │" for s in inner_lines] + [bot]
+    return "\n".join(rows)
+
+
 def render_diff_preview(patch: str) -> None:
     """Print a syntax-highlighted unified diff to stderr using Rich."""
     if not RICH_AVAILABLE:
@@ -662,6 +740,15 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
             )
         console.print(fq_tbl)
         console.print()
+
+    # ── Token 节省面板 ────────────────────────────────────────────────────────
+    if not quiet and report.token_savings:
+        savings_text = render_token_savings_panel(report.token_savings)
+        if savings_text:
+            console.print(Rule("💰  Token 使用情况", style="dim"))
+            console.print()
+            console.print(Padding(savings_text, (0, 2)))
+            console.print()
 
     # ── 页脚 ──────────────────────────────────────────────────────────────────
     if runtime.report_path:

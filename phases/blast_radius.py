@@ -8,6 +8,7 @@ from typing import Optional
 from api_client import call_claude
 from config import Config
 from phases.context_pack import ContextPack
+from phases.context_savings import estimate_diff_tokens, estimate_tokens, build_savings_summary
 
 
 @dataclass
@@ -93,14 +94,29 @@ def analyze(
     skill_context: str,
     config: Config,
     context_pack: "ContextPack | None" = None,
-) -> list[BlastRadiusItem]:
+    project_root: str = ".",
+    detail_level: str = "standard",
+) -> tuple[list[BlastRadiusItem], dict]:
     if context_pack is not None:
-        user = (
-            f"## 结构化上下文包\n\n"
-            f"```json\n{json.dumps(context_pack.to_dict(), ensure_ascii=False, indent=2)}\n```\n\n"
-            f"## Git Diff（参考）\n\n```diff\n{diff}\n```"
+        _pack_json = json.dumps(context_pack.to_dict(), ensure_ascii=False, indent=2)
+        # Baseline = what we would send if passing the full diff
+        _baseline_user = (
+            f"## 结构化上下文包\n\n```json\n{_pack_json}\n```\n\n"
+            f"## Git Diff（完整）\n\n```diff\n{diff}\n```"
         )
+        baseline = estimate_tokens(_baseline_user)
+
+        if detail_level == "verbose":
+            user = _baseline_user
+        else:
+            from phases.context_builder import extract_diff_hunks_for_symbols
+            filtered_diff = extract_diff_hunks_for_symbols(diff, context_pack.changed_symbols)
+            user = (
+                f"## 结构化上下文包\n\n```json\n{_pack_json}\n```\n\n"
+                f"## 改动 Diff（仅相关函数）\n\n```diff\n{filtered_diff}\n```"
+            )
     else:
+        baseline = estimate_diff_tokens(diff)
         symbols = extract_changed_symbols(diff)
         usages = find_usages_in_project(symbols, config.privacy.ignore)
         user = (
@@ -122,16 +138,18 @@ def analyze(
     )
     raw = call_claude(system, user, config)
 
+    savings = build_savings_summary(baseline, estimate_tokens(user))
+
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
-        return []
+        return [], savings
 
     try:
         items_raw = json.loads(match.group())
     except json.JSONDecodeError:
-        return []
+        return [], savings
 
-    return [
+    items = [
         BlastRadiusItem(
             file=item.get("file", ""),
             line=int(item.get("line", 0)),
@@ -145,3 +163,4 @@ def analyze(
         for item in items_raw
         if isinstance(item, dict)
     ]
+    return items, savings

@@ -1,4 +1,4 @@
-# API 变更检测 — OpenAPI / Protobuf 破坏性变更识别
+# API 变更检测 — OpenAPI / Protobuf 破坏性变更识别 ✅ 已完成
 
 **目标：** 自动检测 diff 中 OpenAPI（swagger）或 Protobuf 文件的变更，精确识别破坏性变更（删除接口、改参数类型、删字段），无需 LLM 即可给出高置信度风险判断。
 

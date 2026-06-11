@@ -101,7 +101,8 @@ def _should_run_backend_review(diff: str, cfg) -> bool:
 @click.option("--format", "fmt", default="markdown", type=click.Choice(["markdown", "json"]))
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
 @click.option("--quiet", "quiet", is_flag=True, help="只输出摘要，不展开详情")
-def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type, output, fmt, config_path, quiet):
+@click.option("--details", "details", is_flag=True, help="详细模式：传完整 diff 给 LLM（token 消耗更多）")
+def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type, output, fmt, config_path, quiet, details):
     """Luna — AI 代码审查工具
 
     直接运行 `luna` 即可审查当前 git 改动。
@@ -117,6 +118,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
         return
 
     cfg = load_config(str(config_path or DEFAULT_CONFIG))
+    detail_level = "minimal" if quiet else ("verbose" if details else "standard")
     if project_type:
         cfg.review.project_type = project_type
     if apply_mode and not interactive:
@@ -167,26 +169,74 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
         related_tests=related_tests,
     )
 
-    if phase in (None, "blast") and _should_run_backend_review(diff, cfg):
+    # ── 进度显示 ──────────────────────────────────────────────────────────────
+    _run_backend = phase in (None, "blast") and _should_run_backend_review(diff, cfg)
+    _run_frontend = phase in (None, "blast") and _should_run_frontend_pipeline(diff, cfg)
+    _run_quality = phase in (None, "quality")
+
+    _phase_list = []
+    if _run_backend:
+        _phase_list += [("backend_graph", "构建后端代码图谱"), ("backend_review", "后端专项审查")]
+    if _run_frontend:
+        _phase_list += [("frontend_graph", "构建前端代码图谱"), ("blast", "爆炸范围分析")]
+    elif phase in (None, "blast"):
+        _phase_list += [("blast", "爆炸范围分析")]
+    if _run_quality:
+        _phase_list += [("quality", "代码质量检查")]
+    if cfg.migration.enabled:
+        _phase_list += [("migration", "数据库迁移审查")]
+    if cfg.api_change.enabled:
+        _phase_list += [("api_change", "API 契约检查")]
+
+    _prog = None
+    _task_ids: dict = {}
+    if _rcon and not quiet and _phase_list:
+        try:
+            from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+            _prog = Progress(
+                SpinnerColumn(finished_text="[green]✓[/green]"),
+                TextColumn("{task.description}"),
+                TimeElapsedColumn(),
+                console=_rcon,
+                transient=False,
+            )
+            for key, label in _phase_list:
+                tid = _prog.add_task(f"[dim]{label}[/dim]", total=1, start=False)
+                _task_ids[key] = (tid, label)
+            _prog.start()
+        except Exception:
+            _prog = None
+
+    def _begin(key: str) -> None:
+        if _prog and key in _task_ids:
+            tid, label = _task_ids[key]
+            _prog.start_task(tid)
+            _prog.update(tid, description=f"[cyan]{label}[/cyan]")
+
+    def _finish(key: str) -> None:
+        if _prog and key in _task_ids:
+            tid, label = _task_ids[key]
+            _prog.update(tid, completed=1, description=f"[bold green]{label}[/bold green]")
+
+    if phase in (None, "blast") and _run_backend:
         from phases.backend_adapter_registry import detect_backend_languages_from_diff as _detect
         detected_langs = _detect(diff)
         enabled = {l.lower() for l in cfg.backend.languages}
         backend_symbols = []
         backend_edges = []
 
+        _begin("backend_graph")
         for lang in detected_langs:
             if lang not in enabled:
                 continue
             try:
                 adapter = get_adapter(lang)
             except ValueError:
-                click.echo(f"  [跳过] {lang}: 适配器尚未实现", err=True)
                 continue
 
             backend_cache = Path(".luna") / "cache" / f"{lang}-graph.json"
             graph = _engine_load_graph(str(backend_cache))
             if graph is None:
-                click.echo(f"  构建 {lang} 代码关系图...", err=True)
                 graph = _engine_build_graph(adapter, project_root=".")
                 _engine_save_graph(graph, str(backend_cache))
 
@@ -204,13 +254,14 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                 backend_symbols, combined_graph, max_depth=cfg.backend.max_depth
             )
             backend_pack = build_backend_context_pack(backend_symbols, backend_edges, backend_paths)
-            _status_ctx = _rcon.status("[cyan]后端审查分析中...[/cyan]") if _rcon else None
-            if _status_ctx:
-                _status_ctx.__enter__()
-            backend_items = backend_review.analyze_backend(backend_pack, diff, skill_context, cfg)
-            if _status_ctx:
-                _status_ctx.__exit__(None, None, None)
+            _finish("backend_graph")
+            _begin("backend_review")
+            backend_items, _backend_savings = backend_review.analyze_backend(
+                backend_pack, diff, skill_context, cfg, detail_level=detail_level
+            )
+            _finish("backend_review")
             report.backend_review_items = backend_items
+            report.token_savings["backend"] = _backend_savings
 
             if interactive:
                 for item in sorted(backend_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
@@ -221,13 +272,14 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                         click.echo(f"  建议: {item.suggestion}")
 
     if phase in (None, "blast"):
-        if _should_run_frontend_pipeline(diff, cfg):
+        if _run_frontend:
+            _begin("frontend_graph")
             cache_path = Path(".luna") / "cache" / "context-graph.json"
             graph = load_graph(str(cache_path))
             if graph is None:
-                click.echo("  构建代码关系图...", err=True)
                 graph = build_graph(".")
                 save_graph(graph, str(cache_path))
+            _finish("frontend_graph")
 
             symbols = extract_changed_symbols_from_diff(diff, project_root=".")
             impact_paths = propagate_risk(symbols, graph)
@@ -277,13 +329,16 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
         else:
             context_pack = None
 
-        _status_ctx = _rcon.status("[cyan]爆炸范围分析中...[/cyan]") if _rcon else None
-        if _status_ctx:
-            _status_ctx.__enter__()
-        blast_items = blast.analyze(diff, skill_context, cfg, context_pack=context_pack)
-        if _status_ctx:
-            _status_ctx.__exit__(None, None, None)
+        _begin("blast")
+        blast_items, _blast_savings = blast.analyze(
+            diff, skill_context, cfg,
+            context_pack=context_pack,
+            project_root=".",
+            detail_level=detail_level,
+        )
+        _finish("blast")
         report.blast_radius_items = blast_items
+        report.token_savings["blast"] = _blast_savings
 
         if interactive:
             for item in sorted(blast_items, key=lambda x: {"high": 0, "medium": 1, "low": 2}[x.risk]):
@@ -302,13 +357,17 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                             click.echo(f"\n--- patch ---\n{item.suggestion}\n--- end ---\n")
 
     if phase in (None, "quality"):
-        _status_ctx = _rcon.status("[cyan]代码质量审查中...[/cyan]") if _rcon else None
-        if _status_ctx:
-            _status_ctx.__enter__()
-        quality_items = quality.analyze(diff, skill_context, cfg)
-        if _status_ctx:
-            _status_ctx.__exit__(None, None, None)
+        _begin("quality")
+        _quality_syms = symbols if "symbols" in dir() else None
+        quality_items, _quality_savings = quality.analyze(
+            diff, skill_context, cfg,
+            symbols=_quality_syms,
+            project_root=".",
+            detail_level=detail_level,
+        )
+        _finish("quality")
         report.code_quality_items = quality_items
+        report.token_savings["quality"] = _quality_savings
 
         if interactive:
             for item in quality_items:
@@ -321,6 +380,23 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                             report.applied_fixes.append(f"quality:{item.file}:{item.line}")
                         else:
                             report.skipped_items.append(f"quality:{item.file}:{item.line}")
+
+    # ── 数据库迁移审查 ────────────────────────────────────────────────────────
+    if cfg.migration.enabled:
+        from phases.migration_analyzer import analyze as _migration_analyze
+        _begin("migration")
+        report.migration_items = _migration_analyze(diff, ".")
+        _finish("migration")
+
+    # ── API 契约检查 ──────────────────────────────────────────────────────────
+    if cfg.api_change.enabled:
+        from phases.api_change_detector import analyze as _api_analyze
+        _begin("api_change")
+        report.api_change_items = _api_analyze(diff, ".")
+        _finish("api_change")
+
+    if _prog:
+        _prog.stop()
 
     if fmt == "json":
         import dataclasses as _dc
@@ -469,6 +545,190 @@ def fix_cmd(fix_id, preview, reports_dir, config_path):
         else:
             click.echo("❌ 应用失败，请手动处理。", err=True)
             raise SystemExit(1)
+
+
+@cli.command("static")
+@click.option("--staged", is_flag=True, help="只检查已 git add 的内容")
+@click.option("--since", default=None, help="检查相对某个 ref 的改动，如 main")
+@click.option("--config", "config_path", default=None, help="配置文件路径")
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]), help="输出格式")
+def static_cmd(staged, since, config_path, fmt):
+    """静态规则检查（不调用 LLM）：数据库迁移风险 + API 契约破坏性变更。
+
+    适合在 CI 流水线中作为快速卡门，几乎瞬间完成。
+    发现 high 风险时退出码为 1。
+    """
+    from phases.migration_analyzer import analyze as migration_analyze
+    from phases.api_change_detector import analyze as api_analyze
+
+    cfg = load_config(str(config_path or DEFAULT_CONFIG))
+
+    try:
+        diff = get_diff(staged=staged, since=since)
+    except DiffError as e:
+        click.echo(f"错误: {e}", err=True)
+        raise SystemExit(1)
+
+    if not diff.strip():
+        click.echo("无改动，跳过静态检查。")
+        return
+
+    diff = redact(diff, cfg.privacy.redact_patterns)
+
+    migration_items = migration_analyze(diff, ".") if cfg.migration.enabled else []
+    api_items = api_analyze(diff, ".") if cfg.api_change.enabled else []
+
+    all_items = migration_items + api_items
+    has_high = any(i.risk == "high" for i in all_items)
+
+    if fmt == "json":
+        import dataclasses as _dc
+        click.echo(json.dumps({
+            "migration": [_dc.asdict(i) for i in migration_items],
+            "api_change": [_dc.asdict(i) for i in api_items],
+            "has_high_risk": has_high,
+        }, ensure_ascii=False, indent=2))
+        if has_high:
+            raise SystemExit(1)
+        return
+
+    # ── Rich 终端输出 ──────────────────────────────────────────────────────────
+    try:
+        from rich.console import Console
+        from rich.table import Table
+        from rich import box as rich_box
+        from rich.rule import Rule
+        console = Console()
+        _rich = True
+    except ImportError:
+        _rich = False
+
+    _RISK_ICON = {"high": "🚨", "medium": "⚠️", "low": "💡"}
+    _RISK_STYLE = {"high": "bold red", "medium": "bold yellow", "low": "bold blue"}
+
+    if not all_items:
+        if _rich:
+            console.print()
+            console.print(Rule("[bold cyan]🌙  Luna Static Check[/bold cyan]", style="cyan"))
+            console.print()
+            console.print("  [bold green]✓[/bold green]  无数据库迁移风险，无 API 契约破坏性变更")
+            console.print()
+        else:
+            click.echo("✓ 无数据库迁移风险，无 API 契约破坏性变更")
+        return
+
+    if _rich:
+        console.print()
+        console.print(Rule("[bold cyan]🌙  Luna Static Check[/bold cyan]", style="cyan"))
+        console.print()
+
+        tbl = Table(
+            show_header=True,
+            header_style="bold",
+            box=rich_box.ROUNDED,
+            padding=(0, 1),
+            border_style="dim",
+            show_lines=True,
+            expand=True,
+        )
+        tbl.add_column("", min_width=2, no_wrap=True, justify="center")
+        tbl.add_column("类型", min_width=8, no_wrap=True)
+        tbl.add_column("操作", min_width=16, no_wrap=True)
+        tbl.add_column("风险说明", min_width=28, ratio=4)
+        tbl.add_column("位置", min_width=18, style="dim", no_wrap=True)
+        tbl.add_column("建议", min_width=14, ratio=2)
+
+        from rich.text import Text
+        for item in sorted(all_items, key=lambda i: {"high": 0, "medium": 1, "low": 2}[i.risk]):
+            category = "数据库迁移" if hasattr(item, "operation") else "API 契约"
+            op = getattr(item, "operation", None) or getattr(item, "change_type", "")
+            tbl.add_row(
+                Text(_RISK_ICON.get(item.risk, ""), style=_RISK_STYLE.get(item.risk, "")),
+                Text(category, style="dim"),
+                Text(op, style=_RISK_STYLE.get(item.risk, "")),
+                item.reason,
+                f"{item.file}:{item.line}",
+                item.suggestion or "-",
+            )
+
+        console.print(tbl)
+        console.print()
+
+        if has_high:
+            console.print("  [bold red]发现 high 风险项，建议修复后再提交。[/bold red]")
+        else:
+            console.print("  [bold yellow]发现风险项，请评估影响后再提交。[/bold yellow]")
+        console.print()
+    else:
+        for item in sorted(all_items, key=lambda i: {"high": 0, "medium": 1, "low": 2}[i.risk]):
+            icon = _RISK_ICON.get(item.risk, "")
+            click.echo(f"{icon} [{item.risk}] {item.file}:{item.line}  {item.reason}")
+            if item.suggestion:
+                click.echo(f"   建议: {item.suggestion}")
+
+    if has_high:
+        raise SystemExit(1)
+
+
+@cli.command("install-hook")
+@click.option(
+    "--hook", "hook_type",
+    default="pre-commit",
+    type=click.Choice(["pre-commit", "pre-push"]),
+    help="要安装的 hook 类型（默认 pre-commit）",
+)
+@click.option("--config", "config_path", default=None, help="传给 luna static 的配置文件路径")
+def install_hook_cmd(hook_type, config_path):
+    """安装 Luna 静态检查作为 git hook（默认关闭，此命令开启）。
+
+    安装后每次 git commit（或 push）前自动运行 luna static，
+    发现 high 风险时拦截提交。不调用 LLM，< 1 秒完成。
+
+    兼容 SourceTree / VS Code 等 GUI 工具（使用绝对路径调用 luna）。
+
+    跳过检查：git commit --no-verify
+    """
+    from hook_installer import install, is_managed
+
+    if is_managed(hook_type=hook_type):
+        click.echo(f"✅ {hook_type} hook 已安装（无需重复安装）")
+        click.echo("   如需重新安装，先运行：luna uninstall-hook")
+        return
+
+    result = install(
+        hook_type=hook_type,
+        config_path=config_path or "",
+        git_root=".",
+    )
+
+    if result:
+        click.echo(f"✅ 已安装 {hook_type} hook")
+        click.echo("   每次提交前自动运行 luna static（纯静态，不调 LLM）")
+        click.echo("   发现 high 风险时拦截提交，low/medium 静默放行")
+        click.echo("   跳过检查：git commit --no-verify")
+        click.echo("   卸载：luna uninstall-hook")
+    else:
+        click.echo(f"⚠️  {hook_type} hook 已存在（非 Luna 安装），未覆盖", err=True)
+        click.echo("   请手动整合，或先备份后删除 .git/hooks/" + hook_type, err=True)
+        raise SystemExit(1)
+
+
+@cli.command("uninstall-hook")
+@click.option(
+    "--hook", "hook_type",
+    default="pre-commit",
+    type=click.Choice(["pre-commit", "pre-push"]),
+    help="要卸载的 hook 类型（默认 pre-commit）",
+)
+def uninstall_hook_cmd(hook_type):
+    """卸载 Luna 安装的 git hook。只删除由 luna install-hook 创建的文件。"""
+    from hook_installer import uninstall
+
+    result = uninstall(hook_type=hook_type, git_root=".")
+    if result:
+        click.echo(f"✅ 已卸载 {hook_type} hook")
+    else:
+        click.echo(f"ℹ️  未找到 Luna 管理的 {hook_type} hook，无需卸载")
 
 
 def main():

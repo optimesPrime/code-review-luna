@@ -6,6 +6,7 @@ import re
 from api_client import call_claude
 from config import Config
 from phases.backend_models import BackendContextPack, BackendReviewItem
+from phases.context_savings import estimate_tokens, build_savings_summary
 
 
 _SYSTEM_PROMPT = """\
@@ -51,21 +52,33 @@ def analyze_backend(
     diff: str,
     skill_context: str,
     config: Config,
-) -> list[BackendReviewItem]:
-    user = (
-        "## 后端结构化上下文包\n\n"
-        f"```json\n{json.dumps(context_pack.to_dict(), ensure_ascii=False, indent=2)}\n```\n\n"
-        "## Git Diff 参考\n\n"
-        f"```diff\n{diff}\n```"
-    )
+    detail_level: str = "standard",
+) -> tuple[list[BackendReviewItem], dict]:
+    baseline = estimate_tokens(diff)
+
+    if detail_level == "verbose":
+        user = (
+            "## 后端结构化上下文包\n\n"
+            f"```json\n{json.dumps(context_pack.to_dict(), ensure_ascii=False, indent=2)}\n```\n\n"
+            "## Git Diff（完整）\n\n"
+            f"```diff\n{diff}\n```"
+        )
+    else:
+        user = (
+            "## 后端结构化上下文包\n\n"
+            f"```json\n{json.dumps(context_pack.to_dict(), ensure_ascii=False, indent=2)}\n```"
+        )
+
     raw = call_claude(_SYSTEM_PROMPT.format(skill_context=skill_context or ""), user, config)
+    savings = build_savings_summary(baseline, estimate_tokens(user))
+
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
-        return []
+        return [], savings
     try:
         parsed = json.loads(match.group())
     except json.JSONDecodeError:
-        return []
+        return [], savings
 
     items: list[BackendReviewItem] = []
     for item in parsed:
@@ -83,4 +96,4 @@ def analyze_backend(
             suggestion=item.get("suggestion"),
             needs_human_review=bool(item.get("needs_human_review", False)),
         ))
-    return items
+    return items, savings

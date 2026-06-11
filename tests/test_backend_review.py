@@ -32,7 +32,7 @@ def test_analyze_backend_parses_json_items(monkeypatch):
     }])
 
     with patch("phases.backend_review.call_claude", return_value=raw):
-        items = analyze_backend(pack, "diff text", "", Config())
+        items, _ = analyze_backend(pack, "diff text", "", Config())
 
     assert len(items) == 1
     assert items[0].file == "Controllers/OrderController.cs"

@@ -6,6 +6,7 @@ from typing import Optional
 
 from api_client import call_claude
 from config import Config
+from phases.context_savings import estimate_diff_tokens, estimate_tokens, build_savings_summary
 
 
 @dataclass
@@ -44,22 +45,37 @@ _SYSTEM_PROMPT = """\
 只输出 JSON 数组，不要其他内容。"""
 
 
-def analyze(diff: str, skill_context: str, config: Config) -> list[CodeQualityItem]:
+def analyze(
+    diff: str,
+    skill_context: str,
+    config: Config,
+    symbols=None,
+    project_root: str = ".",
+    detail_level: str = "standard",
+) -> tuple[list[CodeQualityItem], dict]:
+    baseline = estimate_diff_tokens(diff)
     system = _SYSTEM_PROMPT.format(skill_context=skill_context or "")
-    user = f"## Git Diff\n\n```diff\n{diff}\n```"
+
+    if symbols and detail_level != "verbose":
+        from phases.context_builder import extract_diff_hunks_for_symbols
+        filtered_diff = extract_diff_hunks_for_symbols(diff, symbols)
+        user = f"## 改动 Diff（仅相关函数）\n\n```diff\n{filtered_diff}\n```"
+    else:
+        user = f"## Git Diff\n\n```diff\n{diff}\n```"
 
     raw = call_claude(system, user, config)
+    savings = build_savings_summary(baseline, estimate_tokens(user))
 
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
-        return []
+        return [], savings
 
     try:
         items_raw = json.loads(match.group())
     except json.JSONDecodeError:
-        return []
+        return [], savings
 
-    return [
+    items = [
         CodeQualityItem(
             file=item.get("file", ""),
             line=int(item.get("line", 0)),
@@ -73,3 +89,4 @@ def analyze(diff: str, skill_context: str, config: Config) -> list[CodeQualityIt
         for item in items_raw
         if isinstance(item, dict)
     ]
+    return items, savings

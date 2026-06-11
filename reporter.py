@@ -22,6 +22,9 @@ class ReviewReport:
     impact_paths: list = field(default_factory=list)
     changed_symbols: list = field(default_factory=list)
     review_questions: list[str] = field(default_factory=list)
+    token_savings: dict = field(default_factory=dict)
+    migration_items: list = field(default_factory=list)
+    api_change_items: list = field(default_factory=list)
 
 
 def _backend_section(items: list[BackendReviewItem]) -> str:

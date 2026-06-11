@@ -81,9 +81,8 @@ class TestBuildCheckpoints:
         from terminal_renderer import build_checkpoints
         r = _make_report()
         results = build_checkpoints(r)
-        assert len(results) == 9
+        assert len(results) == 11
         assert all(cp.status == "ok" for cp in results)
-        assert all(cp.reason == "未发现明显风险" for cp in results)
 
     def test_blast_item_mapped_to_correct_checkpoint(self):
         from terminal_renderer import build_checkpoints
@@ -101,7 +100,7 @@ class TestBuildCheckpoints:
         # But issue_type=missing_error_handling contributes to fix_mode
         results = build_checkpoints(r)
         assert isinstance(results, list)
-        assert len(results) == 9
+        assert len(results) == 11
 
     def test_highest_risk_item_wins(self):
         from terminal_renderer import build_checkpoints

@@ -34,7 +34,7 @@ def test_analyze_returns_quality_items(monkeypatch):
         "suggestion": "删除第 14 行重复调用",
     }])
     with patch("phases.code_quality.call_claude", return_value=api_response):
-        items = analyze(SAMPLE_DIFF, "", cfg)
+        items, _ = analyze(SAMPLE_DIFF, "", cfg)
     assert len(items) == 1
     assert items[0].issue_type == "redundant"
     assert items[0].risk == "low"
@@ -44,7 +44,7 @@ def test_analyze_returns_empty_on_no_issues(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     cfg = Config()
     with patch("phases.code_quality.call_claude", return_value="[]"):
-        items = analyze(SAMPLE_DIFF, "", cfg)
+        items, _ = analyze(SAMPLE_DIFF, "", cfg)
     assert items == []
 
 
@@ -52,5 +52,5 @@ def test_analyze_returns_empty_on_invalid_json(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     cfg = Config()
     with patch("phases.code_quality.call_claude", return_value="无问题"):
-        items = analyze(SAMPLE_DIFF, "", cfg)
+        items, _ = analyze(SAMPLE_DIFF, "", cfg)
     assert items == []
