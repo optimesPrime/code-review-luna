@@ -1,0 +1,136 @@
+{
+  "fix_candidates": [
+    {
+      "id": 1,
+      "mode": "assist",
+      "title": "build_graph 引入 SQLite 增量缓存后，缓存命中的文件会跳过解析，仅依赖后续从数据库恢复 _importers。该函数是风险传播的核心数据源，如果缓存中的文件哈希、文件路径或边数据不一致，可能导致 importer 关系缺失，从而低估受影响文件范围。",
+      "reason": "phases/context_graph.py:75",
+      "command_hint": "luna fix 1 --preview",
+      "impact": "高价值",
+      "file": "phases/context_graph.py",
+      "line": 75,
+      "evidence": "",
+      "suggestion": "为 build_graph 增加增量缓存一致性测试：首次全量构建、无变更二次构建、修改 importer、修改 imported、删除文件、移动文件，并断言 graph._importers 与 graph.edges 与全量解析结果一致。"
+    },
+    {
+      "id": 2,
+      "mode": "manual",
+      "title": "缓存命中判断使用 cached_hashes.get(str(src))，同时后续 db.get_all_files()/get_all_edges() 也假设数据库使用绝对路径字符串。如果 GraphDB 内部存储的是相对路径或规范化方式不同，会导致所有缓存失效，或更严重地导致边合并失败、删除集合计算错误，影响 blast radius 结果准确性。",
+      "reason": "phases/context_graph.py:84",
+      "command_hint": "luna detail 2",
+      "impact": "阻塞",
+      "file": "phases/context_graph.py",
+      "line": 84,
+      "evidence": "",
+      "suggestion": "人工确认 GraphDB 的路径存储契约；建议统一在 GraphDB API 边界明确使用绝对路径或相对路径，并增加路径格式断言测试。"
+    },
+    {
+      "id": 3,
+      "mode": "manual",
+      "title": "db.sync(deleted, reparsed, new_importers, project_root) 在合并缓存边之前执行，且 new_importers 只包含本轮重新解析文件产生的关系。如果 GraphDB.sync 将 new_importers 视为完整图而不是增量更新，可能删除或覆盖未重新解析文件的缓存边，导致后续 find_usages/风险传播漏报。",
+      "reason": "phases/context_graph.py:106",
+      "command_hint": "luna detail 3",
+      "impact": "阻塞",
+      "file": "phases/context_graph.py",
+      "line": 106,
+      "evidence": "",
+      "suggestion": "人工审查 GraphDB.sync 语义；若 sync 需要完整图，应先合并缓存边再同步，或修改 API 明确传入 reparsed 范围内需要替换的边。"
+    },
+    {
+      "id": 4,
+      "mode": "assist",
+      "title": "前端依赖图构建路径从显式 JSON 缓存 load_graph/save_graph 切换为每次调用 build_graph('.')，实际缓存逻辑下沉到 build_graph 的 SQLite 增量缓存。该变更会影响所有 blast 阶段的调用链，若 SQLite 缓存不可用会退化为全量解析，可能带来性能回退但功能上有兜底。",
+      "reason": "luna.py:277",
+      "command_hint": "luna fix 4 --preview",
+      "impact": "建议",
+      "file": "luna.py",
+      "line": 277,
+      "evidence": "",
+      "suggestion": "确认 phases.sqlite_graph.GraphDB 在发布包中可用，并补充一次缓存命中、缓存不可用、首次构建三种场景的端到端测试。"
+    },
+    {
+      "id": 5,
+      "mode": "assist",
+      "title": "从 db.get_all_edges() 合并缓存边时假设返回 imported_abs、importer_abs 且方向为 imported -> importers。若数据库边方向与该约定不一致，最终 graph._importers 和 graph.edges 方向会反转，导致风险传播错误。",
+      "reason": "phases/context_graph.py:116",
+      "command_hint": "luna fix 5 --preview",
+      "impact": "建议",
+      "file": "phases/context_graph.py",
+      "line": 116,
+      "evidence": "",
+      "suggestion": "增加针对边方向的回归测试：A imports B 时，修改 B 应能传播到 A，修改 A 不应通过该边传播到 B。"
+    },
+    {
+      "id": 6,
+      "mode": "assist",
+      "title": "graph.edges 现在在末尾统一由 graph._importers 重建，约定 source=importer、target=imported。该行为会影响依赖度计算和所有基于 graph.edges 的调用方；若其他代码曾依赖解析阶段即时写入的 edges 或不同方向，会产生兼容性问题。",
+      "reason": "phases/context_graph.py:137",
+      "command_hint": "luna fix 6 --preview",
+      "impact": "建议",
+      "file": "phases/context_graph.py",
+      "line": 137,
+      "evidence": "",
+      "suggestion": "全局搜索 graph.edges 的使用方，确认均接受 source=importer、target=imported 的方向约定，并补充方向说明测试。"
+    },
+    {
+      "id": 7,
+      "mode": "assist",
+      "title": "风险传播从直接读取 graph._importers 改为调用 graph.find_usages(current)。如果 find_usages 的实现不是简单读取 _importers，或者依赖 graph.edges 的完整性/方向，则传播结果会随 build_graph 新的边重建逻辑变化，可能影响 blast radius 的覆盖范围。",
+      "reason": "phases/risk_propagation.py:65",
+      "command_hint": "luna fix 7 --preview",
+      "impact": "建议",
+      "file": "phases/risk_propagation.py",
+      "line": 65,
+      "evidence": "",
+      "suggestion": "确认 ContextGraph.find_usages 与 _importers 语义一致；增加 propagate_risk 测试覆盖链式依赖、循环依赖、最大深度限制和缓存命中图。"
+    },
+    {
+      "id": 8,
+      "mode": "manual",
+      "title": "缓存命中时直接跳过解析，只创建了文件节点，没有从缓存恢复符号节点等完整图信息，导致 build_graph 返回的 ContextGraph 在缓存命中场景下与全量解析结果不一致。",
+      "reason": "phases/context_graph.py:111",
+      "command_hint": "luna detail 8",
+      "impact": "建议",
+      "file": "phases/context_graph.py",
+      "line": 111,
+      "evidence": "graph.nodes[rel] = GraphNode(id=rel, node_type=\"file\", file=rel, name=rel) ... if db is not None and cached_hashes.get(str(src)) == new_hash: ... continue",
+      "suggestion": "如果要跳过解析，需要从 SQLite 中恢复该文件对应的完整节点和边；或者明确将 ContextGraph 缩减为只包含文件依赖关系，并调整所有下游调用避免依赖符号节点。"
+    },
+    {
+      "id": 9,
+      "mode": "manual",
+      "title": "代码计算了文件内容哈希 new_hash，但同步 SQLite 缓存时没有把新哈希传入 db.sync，可能导致缓存哈希无法更新或后续缓存命中判断不准确。",
+      "reason": "phases/context_graph.py:132",
+      "command_hint": "luna detail 9",
+      "impact": "建议",
+      "file": "phases/context_graph.py",
+      "line": 132,
+      "evidence": "new_hash = hashlib.sha256(content_bytes).hexdigest()；后续 db.sync(deleted=deleted_abs, reparsed=reparsed, new_importers=graph._importers, project_root=str(root)) 未传递 new_hash 或哈希映射",
+      "suggestion": "将本轮重新解析文件的哈希映射传给 GraphDB.sync，或确保 GraphDB.sync 内部会基于 reparsed 文件重新计算并持久化哈希。"
+    },
+    {
+      "id": 10,
+      "mode": "assist",
+      "title": "新增源码文件扫描逻辑会影响 build_graph 的输入集合。当前使用 resolve() 后再 relative_to(root)，能规避部分符号链接或路径异常，并继续按 _SKIP_DIRS 和扩展名过滤，爆炸范围主要限于前端图构建文件发现阶段。",
+      "reason": "phases/context_graph.py:53",
+      "command_hint": "luna fix 10 --preview",
+      "impact": "建议",
+      "file": "phases/context_graph.py",
+      "line": 53,
+      "evidence": "",
+      "suggestion": "可补充包含 .vue/.tsx、跳过目录、符号链接或不可访问文件的扫描单元测试。"
+    },
+    {
+      "id": 11,
+      "mode": "manual",
+      "title": "读取文件内容失败时已经先向 graph.nodes 写入文件节点，然后直接 continue，返回的图中会残留未解析、无依赖边的文件节点。",
+      "reason": "phases/context_graph.py:105",
+      "command_hint": "luna detail 11",
+      "impact": "建议",
+      "file": "phases/context_graph.py",
+      "line": 105,
+      "evidence": "graph.nodes[rel] = GraphNode(...)；try: content_bytes = src.read_bytes() except OSError: continue",
+      "suggestion": "读取失败时不要提前写入节点，或在 except 中移除该节点并记录告警，避免产生不完整图数据。"
+    }
+  ]
+}

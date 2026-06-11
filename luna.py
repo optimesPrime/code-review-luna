@@ -274,11 +274,8 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     if phase in (None, "blast"):
         if _run_frontend:
             _begin("frontend_graph")
-            cache_path = Path(".luna") / "cache" / "context-graph.json"
-            graph = load_graph(str(cache_path))
-            if graph is None:
-                graph = build_graph(".")
-                save_graph(graph, str(cache_path))
+            # build_graph() handles SQLite incremental caching internally
+            graph = build_graph(".")
             _finish("frontend_graph")
 
             symbols = extract_changed_symbols_from_diff(diff, project_root=".")

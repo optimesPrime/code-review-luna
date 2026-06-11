@@ -1,5 +1,6 @@
 # phases/context_graph.py
 from __future__ import annotations
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -49,26 +50,119 @@ _SKIP_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__", ".cache", 
 _SOURCE_EXTS = {".js", ".ts", ".jsx", ".tsx", ".vue"}
 
 
+def _scan_source_files(root: Path) -> list[Path]:
+    """Return resolved absolute paths of all source files under root."""
+    result: list[Path] = []
+    for p in root.rglob("*"):
+        if not p.is_file() or p.suffix not in _SOURCE_EXTS:
+            continue
+        try:
+            resolved = p.resolve()
+            if not any(part in _SKIP_DIRS for part in resolved.relative_to(root).parts):
+                result.append(resolved)
+        except (ValueError, OSError):
+            continue
+    return result
+
+
+def _parse_file(src: Path, rel: str, root: Path, graph: "ContextGraph") -> None:
+    try:
+        if src.suffix == ".vue":
+            _process_vue_file(src, rel, root, graph)
+        else:
+            _process_js_file(src, rel, root, graph)
+    except (ImportError, ModuleNotFoundError, OSError, ValueError, RecursionError):
+        _process_file_regex(src, rel, root, graph)
+
+
 def build_graph(project_root: str) -> ContextGraph:
-    root = Path(project_root)
+    root = Path(project_root).resolve()
     graph = ContextGraph()
 
-    source_files = [
-        p for p in root.rglob("*")
-        if p.suffix in _SOURCE_EXTS
-        and not any(part in _SKIP_DIRS for part in p.relative_to(root).parts)
-    ]
+    # ── SQLite incremental cache ──────────────────────────────────────────────
+    db = None
+    cached_hashes: dict[str, str] = {}
+    try:
+        from phases.sqlite_graph import GraphDB
+        _db_dir = root / ".luna" / "cache"
+        _db_dir.mkdir(parents=True, exist_ok=True)
+        db = GraphDB(str(_db_dir / "context-graph.db"))
+        cached_hashes = db.get_all_hashes()
+    except Exception:
+        db = None  # cache unavailable — proceed with full parse
+
+    source_files = _scan_source_files(root)
+
+    # Track which files were skipped (cache hit) vs re-parsed
+    reparsed: set[str] = set()
+    skipped: set[str] = set()
 
     for src in source_files:
         rel = str(src.relative_to(root))
         graph.nodes[rel] = GraphNode(id=rel, node_type="file", file=rel, name=rel)
+
         try:
-            if src.suffix == ".vue":
-                _process_vue_file(src, rel, root, graph)
-            else:
-                _process_js_file(src, rel, root, graph)
-        except (ImportError, ModuleNotFoundError, OSError, ValueError, RecursionError):
-            _process_file_regex(src, rel, root, graph)
+            content_bytes = src.read_bytes()
+        except OSError:
+            continue
+        new_hash = hashlib.sha256(content_bytes).hexdigest()
+
+        if db is not None and cached_hashes.get(str(src)) == new_hash:
+            skipped.add(str(src))
+            # Safe to skip: luna's pipeline only uses graph._importers (for BFS)
+            # and graph.edges (for degree calc). Symbol nodes in graph.nodes are
+            # not consumed by any downstream caller after build_graph() returns.
+            continue
+
+        reparsed.add(str(src))
+        _parse_file(src, rel, root, graph)
+
+    # ── Sync SQLite and merge cached edges ────────────────────────────────────
+    if db is not None:
+        db_read_ok = False
+        try:
+            current_abs = {str(p) for p in source_files}
+            deleted_abs = set(db.get_all_files()) - current_abs
+
+            # Use public API — no direct _conn access
+            db.sync(
+                deleted=deleted_abs,
+                reparsed=reparsed,
+                new_importers=graph._importers,
+                project_root=str(root),
+            )
+
+            # Merge cached edges for skipped (unchanged) files
+            for imported_abs, importer_abs in db.get_all_edges():
+                try:
+                    imported_rel = str(Path(imported_abs).relative_to(root))
+                    importer_rel = str(Path(importer_abs).relative_to(root))
+                except ValueError:
+                    continue
+                graph._importers.setdefault(imported_rel, set()).add(importer_rel)
+
+            db_read_ok = True
+
+        except Exception as _e:
+            import sys
+            print(f"[luna] SQLite cache error ({_e}), continuing without cache.", file=sys.stderr)
+        finally:
+            db.close()
+
+        # If we skipped files but couldn't load their cached edges, re-parse them
+        if not db_read_ok and skipped:
+            for abs_path in skipped:
+                src = Path(abs_path)
+                rel = str(src.relative_to(root))
+                _parse_file(src, rel, root, graph)
+
+    # Rebuild graph.edges from merged _importers
+    # Convention: source=importer(a.ts), target=imported(b.ts)  ("a imports b")
+    graph.edges = [
+        GraphEdge(source=importer_rel, target=imported_rel, edge_type="imports")
+        for imported_rel, importers in graph._importers.items()
+        for importer_rel in importers
+    ]
 
     return graph
 

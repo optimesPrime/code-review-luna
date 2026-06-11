@@ -62,7 +62,7 @@ def propagate_risk(
             if depth > max_depth:
                 continue
 
-            for importer in graph._importers.get(current, set()):
+            for importer in graph.find_usages(current):
                 if importer in visited:
                     continue
                 visited.add(importer)
