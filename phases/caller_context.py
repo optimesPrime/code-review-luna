@@ -1,0 +1,206 @@
+from __future__ import annotations
+import os
+import subprocess
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from phases.symbol_locator import ChangedSymbol
+
+
+@dataclass
+class CallerSnippet:
+    file: str
+    line: int
+    snippet: str
+    language: str
+
+
+@dataclass
+class SymbolCallers:
+    symbol: str
+    callers: list[CallerSnippet]
+    total_count: int
+
+
+_COMMENT_PREFIXES = ("#", "//", "/*", "*")
+
+_IMPORT_PREFIXES = (
+    "import ",   # Python: import x / TS/JS/Java: import X from '...'
+    "from ",     # Python: from x import y
+    "import{",   # TS/JS 无空格: import{X} from '...'
+    "using ",    # C#: using X;
+    "use ",      # PHP: use X;
+    "require ",  # Ruby: require 'x'
+)
+
+_INCLUDE_EXTENSIONS = [
+    "*.py", "*.ts", "*.tsx", "*.js", "*.vue",
+    "*.java", "*.go", "*.cs", "*.rb", "*.php",
+]
+
+_EXT_LANGUAGE = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".vue": "vue",
+    ".java": "java",
+    ".go": "go",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+}
+
+
+def _common_prefix_length(a: str, b: str) -> int:
+    parts_a = a.split(os.sep)
+    parts_b = b.split(os.sep)
+    n = 0
+    for x, y in zip(parts_a, parts_b):
+        if x == y:
+            n += 1
+        else:
+            break
+    return n
+
+
+def grep_call_sites(
+    symbol: str,
+    project_root: str,
+    ignore_dirs: list[str],
+    self_file: str | None = None,
+) -> list[tuple[str, int]]:
+    cmd = ["grep", "-rn"]
+    for ext in _INCLUDE_EXTENSIONS:
+        cmd.extend(["--include", ext])
+    for d in ignore_dirs:
+        cmd.extend(["--exclude-dir", d.rstrip("/")])
+    cmd.extend([symbol, project_root])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        return []
+
+    self_norm = os.path.normpath(self_file) if self_file else None
+    hits: list[tuple[str, int]] = []
+
+    for raw_line in result.stdout.splitlines():
+        parts = raw_line.split(":", 2)
+        if len(parts) < 3:
+            continue
+        file_path, line_str, content = parts[0], parts[1], parts[2]
+        try:
+            line_no = int(line_str)
+        except ValueError:
+            continue
+
+        # Exclude self file
+        if self_norm and os.path.normpath(file_path) == self_norm:
+            continue
+
+        # Exclude comment lines
+        stripped = content.lstrip()
+        if stripped.startswith(_COMMENT_PREFIXES):
+            continue
+
+        # Exclude import lines
+        if stripped.startswith(_IMPORT_PREFIXES):
+            continue
+
+        # Exclude pure type-annotation lines (no real call or attribute access)
+        is_real_usage = f"{symbol}(" in content or f"{symbol}." in content
+        if not is_real_usage:
+            type_markers = (
+                f": {symbol}",
+                f"->{symbol}",
+                f"-> {symbol}",
+                f"[{symbol}",
+                f"| {symbol}",
+                f"{symbol}]",
+                f"{symbol},",
+            )
+            if any(m in content for m in type_markers):
+                continue
+
+        hits.append((file_path, line_no))
+
+    # Sort: closest directory to self_file first, then by (file, line)
+    if self_norm:
+        self_dir = os.path.dirname(self_norm)
+        hits.sort(key=lambda h: (-_common_prefix_length(h[0], self_dir), h[0], h[1]))
+    else:
+        hits.sort(key=lambda h: (h[0], h[1]))
+
+    return hits
+
+
+def _detect_language(file_path: str) -> str:
+    ext = os.path.splitext(file_path)[1].lower()
+    return _EXT_LANGUAGE.get(ext, "unknown")
+
+
+def build_caller_contexts(
+    symbols: list["ChangedSymbol"],
+    project_root: str,
+    ignore_dirs: list[str],
+    max_callers_per_symbol: int = 5,
+    max_snippet_lines: int = 12,
+    total_callers_cap: int = 20,
+) -> list[SymbolCallers]:
+    from phases.symbol_locator import ChangedSymbol as _CS  # noqa: F401
+    results: list[SymbolCallers] = []
+    total_shown = 0
+
+    for sym in symbols:
+        self_file = sym.file if sym.file else None
+        all_hits = grep_call_sites(
+            sym.symbol, project_root, ignore_dirs, self_file=self_file
+        )
+        total_count = len(all_hits)
+        capped_hits = all_hits[:max_callers_per_symbol]
+
+        callers: list[CallerSnippet] = []
+        for file_path, line_no in capped_hits:
+            if total_shown >= total_callers_cap:
+                break
+            snippet = extract_call_snippet(file_path, line_no, max_lines=max_snippet_lines)
+            callers.append(CallerSnippet(
+                file=file_path,
+                line=line_no,
+                snippet=snippet,
+                language=_detect_language(file_path),
+            ))
+            total_shown += 1
+
+        results.append(SymbolCallers(
+            symbol=sym.symbol,
+            callers=callers,
+            total_count=total_count,
+        ))
+
+    return results
+
+
+def extract_call_snippet(
+    file_path: str,
+    line: int,
+    context_lines: int = 5,
+    max_lines: int = 12,
+) -> str:
+    try:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+    except OSError:
+        return ""
+
+    start = max(0, line - context_lines - 1)
+    end = min(len(all_lines), line + context_lines)
+    window = all_lines[start:end]
+
+    if len(window) > max_lines:
+        window = window[:max_lines]
+        return "".join(window).rstrip("\n") + "\n... (truncated)"
+
+    return "".join(window).rstrip("\n")

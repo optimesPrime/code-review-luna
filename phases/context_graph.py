@@ -51,26 +51,35 @@ _SOURCE_EXTS = {".js", ".ts", ".jsx", ".tsx", ".vue"}
 
 def build_graph(project_root: str) -> ContextGraph:
     root = Path(project_root)
-    graph = ContextGraph()
+    db_path = root / ".luna" / "cache" / "context-graph.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    source_files = [
-        p for p in root.rglob("*")
-        if p.suffix in _SOURCE_EXTS
-        and not any(part in _SKIP_DIRS for part in p.relative_to(root).parts)
-    ]
-
-    for src in source_files:
-        rel = str(src.relative_to(root))
-        graph.nodes[rel] = GraphNode(id=rel, node_type="file", file=rel, name=rel)
-        try:
-            if src.suffix == ".vue":
-                _process_vue_file(src, rel, root, graph)
-            else:
-                _process_js_file(src, rel, root, graph)
-        except (ImportError, ModuleNotFoundError, OSError, ValueError, RecursionError):
-            _process_file_regex(src, rel, root, graph)
-
+    from phases.sqlite_graph import GraphDB
+    db = GraphDB(str(db_path))
+    try:
+        db.update(project_root)
+        graph = _graph_from_db(db)
+    finally:
+        db.close()
     return graph
+
+
+def _graph_from_db(db) -> ContextGraph:
+    graph = ContextGraph()
+    for row in db.all_nodes():
+        graph.nodes[row[0]] = GraphNode(
+            id=row[0], node_type=row[1], file=row[2], name=row[3], line=row[4]
+        )
+    for row in db.all_edges():
+        graph.edges.append(GraphEdge(source=row[0], target=row[1], edge_type=row[2]))
+    for row in db.import_edges():
+        graph._importers.setdefault(row[1], set()).add(row[0])
+    return graph
+
+
+def _db_path_from_json(json_path: str) -> str:
+    p = Path(json_path)
+    return str(p.parent / (p.stem + ".db"))
 
 
 def _get_graph_parser(ext: str):
@@ -246,6 +255,18 @@ def save_graph(graph: ContextGraph, path: str) -> None:
 
 
 def load_graph(path: str) -> ContextGraph | None:
+    # Prefer SQLite DB
+    db_path = Path(_db_path_from_json(path))
+    if db_path.exists():
+        from phases.sqlite_graph import GraphDB
+        db = GraphDB(str(db_path))
+        try:
+            graph = _graph_from_db(db)
+        finally:
+            db.close()
+        return graph
+
+    # Fall back to legacy JSON
     p = Path(path)
     if not p.exists():
         return None
