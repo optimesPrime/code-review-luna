@@ -178,17 +178,15 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     if _run_backend:
         _phase_list += [("backend_graph", "构建后端代码图谱"), ("backend_review", "后端专项审查")]
     if _run_frontend:
-        _phase_list += [("frontend_graph", "构建前端代码图谱"), ("hybrid_ctx", "混合语义检索"), ("blast", "爆炸范围分析")]
+        _phase_list += [("frontend_graph", "构建前端代码图谱"), ("hybrid_ctx", "混合语义检索"), ("blast", "爆炸范围分析"), ("adversarial", "反驳验证")]
     elif phase in (None, "blast"):
-        _phase_list += [("blast", "爆炸范围分析")]
+        _phase_list += [("blast", "爆炸范围分析"), ("adversarial", "反驳验证")]
     if _run_quality:
         _phase_list += [("quality", "代码质量检查")]
     if cfg.migration.enabled:
         _phase_list += [("migration", "数据库迁移审查")]
     if cfg.api_change.enabled:
         _phase_list += [("api_change", "API 契约检查")]
-    if cfg.domains:
-        _phase_list += [("adversarial", "反驳验证")]
 
     _prog = None
     _task_ids: dict = {}
@@ -378,29 +376,20 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
         )
         _finish("blast")
 
-        if cfg.domains and context_pack is not None and blast_items:
+        if context_pack is not None and blast_items:
             _begin("adversarial")
             try:
-                from phases.domain_classifier import (
-                    classify_symbols_by_domain as _classify,
-                    group_findings_by_domain as _group,
-                )
                 from phases.adversarial_verifier import (
                     adversarial_verify as _adv_verify,
                     build_adversarial_context as _build_ctx,
                 )
-                _domain_map = _classify(context_pack.changed_symbols, cfg.domains)
-                _findings_by_domain = _group(blast_items, _domain_map)
-                _verified: list = []
-                for _dname, _ditems in _findings_by_domain.items():
-                    _uncertain = [i for i in _ditems if i.risk == "high" and i.confidence != "high"]
-                    _certain = [i for i in _ditems if not (i.risk == "high" and i.confidence != "high")]
-                    if _uncertain:
-                        _ctx = _build_ctx(_dname, diff, _domain_map.get(_dname, []), context_pack)
-                        _uncertain = _adv_verify(_uncertain, _ctx, cfg)
-                    _verified.extend(_certain)
-                    _verified.extend(_uncertain)
-                blast_items = _verified
+                _uncertain = [i for i in blast_items if i.risk == "high" and i.confidence != "high"]
+                _certain = [i for i in blast_items if not (i.risk == "high" and i.confidence != "high")]
+                if _uncertain:
+                    _files = {i.file for i in _uncertain}
+                    _ctx = _build_ctx(diff, _files, context_pack)
+                    _uncertain = _adv_verify(_uncertain, _ctx, cfg)
+                blast_items = _certain + _uncertain
             except Exception as _adv_err:
                 if _rcon:
                     _rcon.print(f"[dim yellow]⚠ adversarial_verify 降级：{_adv_err}[/dim yellow]")
