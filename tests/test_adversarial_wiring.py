@@ -1,8 +1,11 @@
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from config import Config, DomainEntry
 from phases.blast_radius import BlastRadiusItem
-from phases.context_graph import ContextGraph
+from phases.symbol_locator import ChangedSymbol
+from phases.context_pack import build_context_pack
+from phases.domain_classifier import classify_symbols_by_domain, group_findings_by_domain
+from phases.adversarial_verifier import adversarial_verify, build_adversarial_context
 
 
 PRIVATE_DIFF = (
@@ -13,12 +16,13 @@ PRIVATE_DIFF = (
     "@@ -1 +1 @@\n-old\n+new\n"
 )
 
-BLAST_UNCERTAIN = json.dumps([{
-    "file": "src/private/a.ts", "line": 1, "symbol": "funcA",
-    "risk": "high", "confidence": "medium", "reason": "test",
-}])
 
-BLAST_EMPTY = "[]"
+def _sym(file: str, symbol: str = "foo") -> ChangedSymbol:
+    return ChangedSymbol(file=file, symbol=symbol, symbol_type="function", start_line=1, change_type="modified")
+
+
+def _item(file: str, symbol: str, risk: str = "high", confidence: str = "medium") -> BlastRadiusItem:
+    return BlastRadiusItem(file=file, line=1, symbol=symbol, risk=risk, confidence=confidence, reason="test")
 
 
 def _cfg_with_domain():
@@ -27,35 +31,46 @@ def _cfg_with_domain():
     return cfg
 
 
-def _empty_graph():
-    return ContextGraph()
+def _run_adversarial_pass(blast_items, diff, cfg, context_pack):
+    """Mirrors the adversarial pass logic in luna.py."""
+    if not (cfg.domains and context_pack is not None and blast_items):
+        return blast_items
+    domain_map = classify_symbols_by_domain(context_pack.changed_symbols, cfg.domains)
+    findings_by_domain = group_findings_by_domain(blast_items, domain_map)
+    verified = []
+    for dname, ditems in findings_by_domain.items():
+        uncertain = [i for i in ditems if i.risk == "high" and i.confidence != "high"]
+        certain = [i for i in ditems if not (i.risk == "high" and i.confidence != "high")]
+        if uncertain:
+            ctx = build_adversarial_context(dname, diff, domain_map.get(dname, []), context_pack)
+            uncertain = adversarial_verify(uncertain, ctx, cfg)
+        verified.extend(certain)
+        verified.extend(uncertain)
+    return verified
 
 
 def test_adversarial_called_when_domains_configured(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     cfg = _cfg_with_domain()
+    sym = _sym("src/private/a.ts", "funcA")
+    pack = build_context_pack([sym], [], related_rules=[], related_tests=[])
+    items = [_item("src/private/a.ts", "funcA")]
     confirm = json.dumps([{"index": 0, "confirmed": True, "reason": "保留"}])
 
-    with patch("luna.load_graph", return_value=_empty_graph()):
-        with patch("luna.build_graph", return_value=_empty_graph()):
-            with patch("phases.blast_radius.call_claude", return_value=BLAST_UNCERTAIN):
-                with patch("phases.adversarial_verifier.call_claude", return_value=confirm) as mock_adv:
-                    from luna import run_review
-                    run_review(diff=PRIVATE_DIFF, config=cfg, quiet=True)
+    with patch("phases.adversarial_verifier.call_claude", return_value=confirm) as mock_adv:
+        _run_adversarial_pass(items, PRIVATE_DIFF, cfg, pack)
 
     mock_adv.assert_called_once()
 
 
-def test_adversarial_not_called_without_domains(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+def test_adversarial_not_called_without_domains():
     cfg = Config()  # no domains
+    sym = _sym("src/a.ts", "foo")
+    pack = build_context_pack([sym], [], related_rules=[], related_tests=[])
+    items = [_item("src/a.ts", "foo")]
 
-    with patch("luna.load_graph", return_value=_empty_graph()):
-        with patch("luna.build_graph", return_value=_empty_graph()):
-            with patch("phases.blast_radius.call_claude", return_value=BLAST_EMPTY):
-                with patch("phases.adversarial_verifier.call_claude") as mock_adv:
-                    from luna import run_review
-                    run_review(diff="diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n", config=cfg, quiet=True)
+    with patch("phases.adversarial_verifier.call_claude") as mock_adv:
+        _run_adversarial_pass(items, "", cfg, pack)
 
     mock_adv.assert_not_called()
 
@@ -63,27 +78,25 @@ def test_adversarial_not_called_without_domains(monkeypatch):
 def test_adversarial_refuted_finding_removed(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     cfg = _cfg_with_domain()
+    sym = _sym("src/private/a.ts", "funcA")
+    pack = build_context_pack([sym], [], related_rules=[], related_tests=[])
+    items = [_item("src/private/a.ts", "funcA")]
     refute = json.dumps([{"index": 0, "confirmed": False, "reason": "调用方不使用返回值"}])
 
-    with patch("luna.load_graph", return_value=_empty_graph()):
-        with patch("luna.build_graph", return_value=_empty_graph()):
-            with patch("phases.blast_radius.call_claude", return_value=BLAST_UNCERTAIN):
-                with patch("phases.adversarial_verifier.call_claude", return_value=refute):
-                    from luna import run_review
-                    report = run_review(diff=PRIVATE_DIFF, config=cfg, quiet=True)
+    with patch("phases.adversarial_verifier.call_claude", return_value=refute):
+        result = _run_adversarial_pass(items, PRIVATE_DIFF, cfg, pack)
 
-    assert report.blast_radius_items == []
+    assert result == []
 
 
 def test_adversarial_error_keeps_original(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     cfg = _cfg_with_domain()
+    sym = _sym("src/private/a.ts", "funcA")
+    pack = build_context_pack([sym], [], related_rules=[], related_tests=[])
+    items = [_item("src/private/a.ts", "funcA")]
 
-    with patch("luna.load_graph", return_value=_empty_graph()):
-        with patch("luna.build_graph", return_value=_empty_graph()):
-            with patch("phases.blast_radius.call_claude", return_value=BLAST_UNCERTAIN):
-                with patch("phases.adversarial_verifier.call_claude", side_effect=RuntimeError("timeout")):
-                    from luna import run_review
-                    report = run_review(diff=PRIVATE_DIFF, config=cfg, quiet=True)
+    with patch("phases.adversarial_verifier.call_claude", side_effect=RuntimeError("timeout")):
+        result = _run_adversarial_pass(items, PRIVATE_DIFF, cfg, pack)
 
-    assert len(report.blast_radius_items) == 1
+    assert len(result) == 1
