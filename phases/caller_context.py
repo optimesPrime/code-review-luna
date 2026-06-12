@@ -141,6 +141,23 @@ def _detect_language(file_path: str) -> str:
     return _EXT_LANGUAGE.get(ext, "unknown")
 
 
+def _module_name_fallback_hits(
+    sym_file: str,
+    project_root: str,
+    ignore_dirs: list[str],
+) -> list[tuple[str, int]]:
+    """
+    当 grep symbol 名找不到直接调用时（工厂函数模式），
+    改用模块名（文件名去路径和扩展名）做 grep。
+    例：symbol=ContextPack, file=phases/context_pack.py
+    → grep "context_pack" 能找到 context_pack.review_questions 这类属性访问行。
+    """
+    module_stem = os.path.splitext(os.path.basename(sym_file))[0]
+    if not module_stem:
+        return []
+    return grep_call_sites(module_stem, project_root, ignore_dirs, self_file=sym_file)
+
+
 def build_caller_contexts(
     symbols: list["ChangedSymbol"],
     project_root: str,
@@ -148,6 +165,7 @@ def build_caller_contexts(
     max_callers_per_symbol: int = 5,
     max_snippet_lines: int = 12,
     total_callers_cap: int = 20,
+    db=None,
 ) -> list[SymbolCallers]:
     from phases.symbol_locator import ChangedSymbol as _CS  # noqa: F401
     results: list[SymbolCallers] = []
@@ -158,6 +176,11 @@ def build_caller_contexts(
         all_hits = grep_call_sites(
             sym.symbol, project_root, ignore_dirs, self_file=self_file
         )
+
+        # Fallback：grep symbol 名无结果时，改搜模块名（覆盖工厂函数模式）
+        if not all_hits and self_file:
+            all_hits = _module_name_fallback_hits(self_file, project_root, ignore_dirs)
+
         total_count = len(all_hits)
         capped_hits = all_hits[:max_callers_per_symbol]
 

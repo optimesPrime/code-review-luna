@@ -16,17 +16,16 @@ def build_backend_context_pack(
     snippet_limit: int = 12,
 ) -> BackendContextPack:
     rules = sorted({rule for path in impact_paths for rule in path.rule_hits})
-    uncertain = [edge for edge in edges if edge.confidence != "high"]
+    # 高置信度边优先，低置信度边附后，to_dict 只取前 30 条
+    sorted_edges = sorted(edges, key=lambda e: 0 if e.confidence == "high" else 1)
     review_focus = _build_review_focus(symbols, impact_paths, rules)
     snippets = [s.evidence for s in symbols if s.evidence][:snippet_limit]
-    snippets.extend(edge.evidence for edge in edges[: max(0, snippet_limit - len(snippets))])
 
     return BackendContextPack(
         changed_symbols=symbols,
-        edges=edges,
+        edges=sorted_edges,
         impact_paths=impact_paths,
         risk_rules_hit=rules,
-        uncertain_edges=uncertain,
         review_focus=review_focus,
         related_snippets=snippets,
     )

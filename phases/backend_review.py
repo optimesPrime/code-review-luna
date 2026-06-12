@@ -19,7 +19,6 @@ _SYSTEM_PROMPT = """\
 - edges: Controller/Service/Repository/Model/Entity/Auth/DB/External API 关系
 - impact_paths: 风险传播链路
 - risk_rules_hit: 本地风险规则命中
-- uncertain_edges: 低置信度边，需要人工确认
 - review_focus: 本次重点审查方向
 - related_snippets: 相关证据片段
 

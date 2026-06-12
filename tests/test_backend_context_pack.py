@@ -41,7 +41,6 @@ def test_backend_context_pack_to_dict_contains_evidence():
         edges=[edge],
         impact_paths=[impact],
         risk_rules_hit=["controller_action_changed"],
-        uncertain_edges=[edge],
         review_focus=["检查接口入口和 service 调用链"],
         related_snippets=["public IActionResult Submit(SubmitOrderRequest request)"],
     )
@@ -51,7 +50,7 @@ def test_backend_context_pack_to_dict_contains_evidence():
     assert data["changed_symbols"][0]["symbol_type"] == "controller_action"
     assert data["edges"][0]["edge_type"] == "calls"
     assert data["impact_paths"][0]["risk"] == "high"
-    assert data["uncertain_edges"][0]["confidence"] == "medium"
+    assert "uncertain_edges" not in data
     assert "检查接口入口" in data["review_focus"][0]
 
 

@@ -91,3 +91,33 @@ def test_review_report_has_impact_paths_and_changed_symbols():
     r = ReviewReport(timestamp="2026-01-01", diff_summary="1 line")
     assert r.impact_paths == []
     assert r.changed_symbols == []
+
+
+def test_save_writes_json_sidecar_with_risk_counts(tmp_path):
+    from phases.blast_radius import BlastRadiusItem
+    from reporter import ReviewReport, save
+    from runtime_context import RuntimeContext
+
+    report = ReviewReport(
+        timestamp="2026-06-11 18:00",
+        diff_summary="共 10 行改动",
+        blast_radius_items=[
+            BlastRadiusItem(file="a.ts", line=1, symbol="foo", risk="high",
+                            confidence="high", reason="test"),
+            BlastRadiusItem(file="b.ts", line=2, symbol="bar", risk="medium",
+                            confidence="high", reason="test2"),
+        ],
+    )
+    rt = RuntimeContext(commit_hash="abc1234", elapsed_seconds=2.5)
+    save(report, str(tmp_path), runtime_ctx=rt)
+
+    import json
+    sidecar_files = list(tmp_path.glob("*_report.json"))
+    assert len(sidecar_files) == 1
+    data = json.loads(sidecar_files[0].read_text())
+    assert data["commit"] == "abc1234"
+    assert data["high"] == 1
+    assert data["medium"] == 1
+    assert data["low"] == 0
+    assert data["elapsed"] == 2.5
+    assert any(i["file"] == "a.ts" for i in data["items"])

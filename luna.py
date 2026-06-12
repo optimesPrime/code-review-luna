@@ -292,6 +292,16 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
             report.changed_symbols = [vars(s) if hasattr(s, '__dict__') else str(s) for s in symbols]
             report.impact_paths = [vars(p) if hasattr(p, '__dict__') else str(p) for p in impact_paths]
 
+            # 注入历史问题记录，让 LLM 知道哪些文件是"慢性病"
+            try:
+                from phases.history_reader import load_reports, get_file_history
+                _changed_files = [s.file for s in symbols]
+                _hist_reports = load_reports(cfg.reports.output_dir, limit=30)
+                if _hist_reports and _changed_files:
+                    context_pack.file_history = get_file_history(_hist_reports, _changed_files)
+            except Exception:
+                pass
+
             # Surprise scoring + review question generation
             from collections import Counter as _Counter
             import os as _os
@@ -326,6 +336,14 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
             _questions = generate_review_questions(_surprise_edges, _hotspots, _bridges)
             context_pack.review_questions = _questions
             report.review_questions = _questions
+
+            try:
+                from phases.caller_context import build_caller_contexts as _build_cc
+                context_pack.caller_contexts = _build_cc(
+                    symbols, ".", cfg.privacy.ignore
+                )
+            except Exception:
+                pass
         else:
             context_pack = None
 
@@ -412,6 +430,16 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     _file_matches = _re.findall(r"^diff --git a/\S+", diff, _re.MULTILINE)
     _line_count = sum(1 for l in diff.splitlines() if l.startswith(("+", "-")) and not l.startswith(("+++", "---")))
 
+    _commit_hash = ""
+    try:
+        import subprocess as _sp
+        _commit_hash = _sp.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=3,
+        ).stdout.strip()
+    except Exception:
+        pass
+
     runtime = RuntimeContext(
         project_name=Path(".").resolve().name,
         project_root=str(Path(".").resolve()),
@@ -424,13 +452,14 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
         changed_lines=_line_count,
         backend_review_status="ran" if report.backend_review_items else "skipped",
         elapsed_seconds=round(time.time() - start_time, 1),
-        report_path="",  # filled in after save()
+        report_path="",
+        commit_hash=_commit_hash,
     )
 
     out_dir = output or cfg.reports.output_dir
     from terminal_renderer import render_review, build_fix_queue as _build_fq
-    report.fix_candidates = _build_fq(report)   # FixCandidate 对象，save 前赋值
-    path = save(report, out_dir)                # latest.json 包含完整 fix_candidates
+    report.fix_candidates = _build_fq(report)
+    path = save(report, out_dir, runtime_ctx=runtime)
     runtime.report_path = str(path)
     render_review(report, runtime, fmt=fmt, quiet=quiet)
 
@@ -729,6 +758,39 @@ def uninstall_hook_cmd(hook_type):
         click.echo(f"✅ 已卸载 {hook_type} hook")
     else:
         click.echo(f"ℹ️  未找到 Luna 管理的 {hook_type} hook，无需卸载")
+
+
+@cli.command("history")
+@click.option("-n", "limit", default=10, help="展示最近 N 次审查（默认 10）")
+@click.option("--file", "filter_file", default=None, help="只展示含指定文件的审查记录")
+@click.option("--trend", "show_trend", is_flag=True, help="展示风险趋势 sparkline")
+@click.option("--hotspots", "show_hotspots", is_flag=True, help="展示高频风险文件 Top 10")
+@click.option("--reports-dir", default=None, help="报告目录（默认读配置）")
+@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
+def history_cmd(limit, filter_file, show_trend, show_hotspots, reports_dir, config_path):
+    """查看历史审查记录、风险趋势和高频问题文件。"""
+    cfg = load_config(str(config_path or DEFAULT_CONFIG))
+    out_dir = reports_dir or cfg.reports.output_dir
+
+    from phases.history_reader import load_reports, aggregate_hotspots, build_trend
+    from history_renderer import render_overview, render_hotspots, render_trend
+
+    reports = load_reports(out_dir, limit=limit)
+
+    if filter_file:
+        reports = [
+            r for r in reports
+            if any(filter_file in item.get("file", "") for item in r.get("items", []))
+        ]
+
+    if show_hotspots:
+        all_reports = load_reports(out_dir, limit=30)
+        render_hotspots(aggregate_hotspots(all_reports))
+    elif show_trend:
+        all_reports = load_reports(out_dir, limit=30)
+        render_trend(build_trend(all_reports))
+    else:
+        render_overview(reports)
 
 
 def main():

@@ -14,7 +14,6 @@ def test_analyze_backend_parses_json_items(monkeypatch):
         edges=[],
         impact_paths=[],
         risk_rules_hit=[],
-        uncertain_edges=[],
         review_focus=[],
         related_snippets=[],
     )
