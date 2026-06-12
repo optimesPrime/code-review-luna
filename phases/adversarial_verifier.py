@@ -8,7 +8,6 @@ from api_client import call_claude
 if TYPE_CHECKING:
     from phases.blast_radius import BlastRadiusItem
     from phases.context_pack import ContextPack
-    from phases.symbol_locator import ChangedSymbol
     from config import Config
 
 _SYSTEM = """\
@@ -29,29 +28,59 @@ _SYSTEM = """\
 只输出 JSON 数组，不要其他内容。"""
 
 
+def filter_diff_for_files(diff: str, files: set[str]) -> str:
+    """Return only diff hunks whose b/ path matches a file in `files`."""
+    if not files:
+        return ""
+    result: list[str] = []
+    lines = diff.split("\n")
+    i = 0
+    file_header: list[str] = []
+    active = False
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git "):
+            parts = line.split(" b/", 1)
+            diff_path = parts[1].strip() if len(parts) == 2 else ""
+            active = any(diff_path == f or diff_path.endswith("/" + f) for f in files)
+            file_header = [line]
+            i += 1
+            while i < len(lines) and not lines[i].startswith("@@") and not lines[i].startswith("diff --git "):
+                file_header.append(lines[i])
+                i += 1
+            continue
+        if active:
+            if file_header:
+                result.extend(file_header)
+                file_header = []
+            result.append(line)
+        i += 1
+    return "\n".join(result)
+
+
 def build_adversarial_context(
-    domain_name: str,
     diff: str,
-    domain_syms: list["ChangedSymbol"],
+    finding_files: set[str],
     context_pack: "ContextPack",
 ) -> str:
-    from phases.domain_classifier import filter_diff_for_files
-    domain_files = {s.file for s in domain_syms}
-    domain_sym_names = {s.symbol for s in domain_syms}
-    domain_diff = filter_diff_for_files(diff, domain_files)
+    """Build adversarial context from diff + caller_contexts scoped to finding files."""
+    finding_sym_names = {
+        s.symbol for s in context_pack.changed_symbols
+        if s.file in finding_files
+    }
+    filtered_diff = filter_diff_for_files(diff, finding_files)
 
     caller_lines: list[str] = []
     for sc in context_pack.caller_contexts:
-        if sc.symbol in domain_sym_names:
+        if sc.symbol in finding_sym_names:
             caller_lines.append(f"symbol={sc.symbol}; callers={sc.total_count}")
             for c in sc.callers[:3]:
                 caller_lines.append(f"  {c.file}:{c.line}  {c.snippet}")
 
     callers_text = "\n".join(caller_lines[:30]) if caller_lines else "（无）"
     return (
-        f"domain={domain_name}\n\n"
         f"## 调用方上下文\n{callers_text}\n\n"
-        f"## domain-scoped diff\n```diff\n{domain_diff[:4000]}\n```"
+        f"## 相关 diff\n```diff\n{filtered_diff[:4000]}\n```"
     )
 
 
@@ -86,5 +115,4 @@ def adversarial_verify(
 
     refuted = {v["index"] for v in verdicts if isinstance(v, dict) and not v.get("confirmed", True)}
     verify_indices = {i for i, _ in to_verify}
-
     return [item for i, item in enumerate(items) if not (i in verify_indices and i in refuted)]

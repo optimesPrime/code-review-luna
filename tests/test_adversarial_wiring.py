@@ -42,7 +42,8 @@ def _run_adversarial_pass(blast_items, diff, cfg, context_pack):
         uncertain = [i for i in ditems if i.risk == "high" and i.confidence != "high"]
         certain = [i for i in ditems if not (i.risk == "high" and i.confidence != "high")]
         if uncertain:
-            ctx = build_adversarial_context(dname, diff, domain_map.get(dname, []), context_pack)
+            domain_files = {s.file for s in domain_map.get(dname, [])}
+            ctx = build_adversarial_context(diff, domain_files, context_pack)
             uncertain = adversarial_verify(uncertain, ctx, cfg)
         verified.extend(certain)
         verified.extend(uncertain)

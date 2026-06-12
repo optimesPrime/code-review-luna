@@ -4,7 +4,11 @@ from phases.blast_radius import BlastRadiusItem
 from phases.context_pack import ContextPack, build_context_pack
 from phases.symbol_locator import ChangedSymbol
 from phases.caller_context import CallerSnippet, SymbolCallers
-from phases.adversarial_verifier import adversarial_verify, build_adversarial_context
+from phases.adversarial_verifier import (
+    adversarial_verify,
+    build_adversarial_context,
+    filter_diff_for_files,
+)
 from config import Config
 
 
@@ -28,6 +32,36 @@ def _pack_with_callers(sym: ChangedSymbol, snippet: str = "foo()") -> ContextPac
 
 def _mock_llm(response: str):
     return patch("phases.adversarial_verifier.call_claude", return_value=response)
+
+
+# --- filter_diff_for_files ---
+
+DIFF_TWO_FILES = (
+    "diff --git a/src/a.ts b/src/a.ts\n"
+    "index 0000000..1111111 100644\n"
+    "--- a/src/a.ts\n"
+    "+++ b/src/a.ts\n"
+    "@@ -1 +1 @@\n-old\n+new\n"
+    "diff --git a/src/b.ts b/src/b.ts\n"
+    "index 0000000..2222222 100644\n"
+    "--- a/src/b.ts\n"
+    "+++ b/src/b.ts\n"
+    "@@ -1 +1 @@\n-old\n+new\n"
+)
+
+
+def test_filter_diff_returns_only_matching_file():
+    filtered = filter_diff_for_files(DIFF_TWO_FILES, {"src/b.ts"})
+    assert "b/src/b.ts" in filtered
+    assert "b/src/a.ts" not in filtered
+
+
+def test_filter_diff_no_match_returns_empty():
+    assert filter_diff_for_files(DIFF_TWO_FILES, {"src/c.ts"}) == ""
+
+
+def test_filter_diff_empty_files_returns_empty():
+    assert filter_diff_for_files(DIFF_TWO_FILES, set()) == ""
 
 
 # --- adversarial_verify ---
@@ -82,31 +116,23 @@ def test_empty_input_returns_empty():
     assert adversarial_verify([], context_snippet="", config=None) == []
 
 
-def test_prompt_contains_domain_context():
+def test_prompt_contains_context():
     finding = _item()
     calls = []
     def fake_call(system, user, config):
         calls.append(user)
         return json.dumps([{"index": 0, "confirmed": True, "reason": "保留"}])
     with patch("phases.adversarial_verifier.call_claude", side_effect=fake_call):
-        adversarial_verify([finding], context_snippet="domain=私募\ncaller: pay(amount)", config=None)
-    assert "domain=私募" in calls[0]
+        adversarial_verify([finding], context_snippet="caller: pay(amount)", config=None)
     assert "caller: pay(amount)" in calls[0]
 
 
 # --- build_adversarial_context ---
 
-def test_build_context_contains_domain_name():
-    sym = _sym()
-    pack = _pack_with_callers(sym, snippet="foo(x)")
-    ctx = build_adversarial_context("私募", "diff content", [sym], pack)
-    assert "domain=私募" in ctx
-
-
 def test_build_context_contains_caller_snippet():
     sym = _sym()
     pack = _pack_with_callers(sym, snippet="pay(amount)")
-    ctx = build_adversarial_context("私募", "diff content", [sym], pack)
+    ctx = build_adversarial_context("diff content", {sym.file}, pack)
     assert "pay(amount)" in ctx
 
 
@@ -117,12 +143,12 @@ def test_build_context_contains_filtered_diff():
         "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n"
         "diff --git a/src/b.ts b/src/b.ts\n@@ -1 +1 @@\n-old\n+new\n"
     )
-    ctx = build_adversarial_context("私募", diff, [sym], pack)
+    ctx = build_adversarial_context(diff, {"src/a.ts"}, pack)
     assert "src/a.ts" in ctx
     assert "src/b.ts" not in ctx
 
 
-def test_build_context_excludes_other_domain_callers():
+def test_build_context_excludes_unrelated_callers():
     sym_a = _sym(file="src/a.ts", symbol="funcA")
     sym_b = _sym(file="src/b.ts", symbol="funcB")
     pack = build_context_pack([sym_a, sym_b], [], related_rules=[], related_tests=[])
@@ -132,6 +158,13 @@ def test_build_context_excludes_other_domain_callers():
         ], total_count=1),
         SymbolCallers(symbol="funcB", callers=[], total_count=0),
     ]
-    ctx = build_adversarial_context("私募", "", [sym_a], pack)
+    ctx = build_adversarial_context("", {"src/a.ts"}, pack)
     assert "funcA" in ctx
     assert "funcB" not in ctx
+
+
+def test_build_context_no_callers_shows_placeholder():
+    sym = _sym()
+    pack = build_context_pack([sym], [], related_rules=[], related_tests=[])
+    ctx = build_adversarial_context("", {sym.file}, pack)
+    assert "（无）" in ctx
