@@ -741,6 +741,36 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
         console.print(fq_tbl)
         console.print()
 
+    # ── 反驳过滤 ──────────────────────────────────────────────────────────────
+    refuted = getattr(report, "adversarial_refuted", [])
+    if refuted:
+        console.print(Rule("🔬  反驳验证 — 已过滤误报", style="dim"))
+        console.print()
+        rf_tbl = Table(
+            show_header=True,
+            header_style="bold dim",
+            box=rich_box.SIMPLE,
+            padding=(0, 1),
+            border_style="dim",
+            expand=True,
+        )
+        rf_tbl.add_column("符号",   style="dim", min_width=12, no_wrap=True)
+        rf_tbl.add_column("位置",   style="dim", min_width=16, no_wrap=True)
+        rf_tbl.add_column("原因（已被反驳）", min_width=20, ratio=3)
+        rf_tbl.add_column("反驳理由", min_width=20, ratio=3)
+        for rf in refuted:
+            item = rf.item
+            sym = getattr(item, "symbol", "") or "—"
+            loc = f"{item.file}:{item.line}"
+            rf_tbl.add_row(
+                Text(sym, style="dim"),
+                Text(loc, style="dim"),
+                Text(getattr(item, "reason", ""), style="dim strike"),
+                Text(rf.adv_reason, style="dim green"),
+            )
+        console.print(rf_tbl)
+        console.print()
+
     # ── Token 节省面板 ────────────────────────────────────────────────────────
     if not quiet and report.token_savings:
         savings_text = render_token_savings_panel(report.token_savings)

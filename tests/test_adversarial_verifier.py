@@ -8,6 +8,7 @@ from phases.adversarial_verifier import (
     adversarial_verify,
     build_adversarial_context,
     filter_diff_for_files,
+    RefutedFinding,
 )
 from config import Config
 
@@ -70,50 +71,67 @@ def test_confirmed_finding_survives():
     finding = _item()
     resp = json.dumps([{"index": 0, "confirmed": True, "reason": "确实影响支付"}])
     with _mock_llm(resp):
-        result = adversarial_verify([finding], context_snippet="pay(amount)", config=None)
-    assert len(result) == 1 and result[0].symbol == "foo"
+        survivors, refuted = adversarial_verify([finding], context_snippet="pay(amount)", config=None)
+    assert len(survivors) == 1 and survivors[0].symbol == "foo"
+    assert refuted == []
 
 
 def test_refuted_finding_is_removed():
     finding = _item()
     resp = json.dumps([{"index": 0, "confirmed": False, "reason": "调用方不使用返回值"}])
     with _mock_llm(resp):
-        result = adversarial_verify([finding], context_snippet="", config=None)
-    assert result == []
+        survivors, refuted = adversarial_verify([finding], context_snippet="", config=None)
+    assert survivors == []
+    assert len(refuted) == 1
+    assert isinstance(refuted[0], RefutedFinding)
+
+
+def test_refuted_finding_carries_adv_reason():
+    finding = _item()
+    resp = json.dumps([{"index": 0, "confirmed": False, "reason": "调用方不使用返回值"}])
+    with _mock_llm(resp):
+        _, refuted = adversarial_verify([finding], context_snippet="", config=None)
+    assert refuted[0].item.symbol == "foo"
+    assert refuted[0].adv_reason == "调用方不使用返回值"
 
 
 def test_high_confidence_skips_llm():
     finding = _item(confidence="high")
     with patch("phases.adversarial_verifier.call_claude") as mock_llm:
-        result = adversarial_verify([finding], context_snippet="", config=None)
+        survivors, refuted = adversarial_verify([finding], context_snippet="", config=None)
     mock_llm.assert_not_called()
-    assert len(result) == 1
+    assert len(survivors) == 1
+    assert refuted == []
 
 
 def test_low_risk_skips_llm():
     finding = _item(risk="low", confidence="low")
     with patch("phases.adversarial_verifier.call_claude") as mock_llm:
-        result = adversarial_verify([finding], context_snippet="", config=None)
+        survivors, refuted = adversarial_verify([finding], context_snippet="", config=None)
     mock_llm.assert_not_called()
-    assert len(result) == 1
+    assert len(survivors) == 1
+    assert refuted == []
 
 
 def test_no_json_array_in_response_keeps_all():
     finding = _item()
     with _mock_llm("not valid json"):
-        result = adversarial_verify([finding], context_snippet="", config=None)
-    assert len(result) == 1
+        survivors, refuted = adversarial_verify([finding], context_snippet="", config=None)
+    assert len(survivors) == 1
+    assert refuted == []
 
 
 def test_llm_exception_keeps_all():
     finding = _item()
     with patch("phases.adversarial_verifier.call_claude", side_effect=RuntimeError("network error")):
-        result = adversarial_verify([finding], context_snippet="", config=None)
-    assert len(result) == 1
+        survivors, refuted = adversarial_verify([finding], context_snippet="", config=None)
+    assert len(survivors) == 1
+    assert refuted == []
 
 
 def test_empty_input_returns_empty():
-    assert adversarial_verify([], context_snippet="", config=None) == []
+    survivors, refuted = adversarial_verify([], context_snippet="", config=None)
+    assert survivors == [] and refuted == []
 
 
 def test_prompt_contains_context():

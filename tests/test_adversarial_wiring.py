@@ -31,14 +31,16 @@ def _item(file: str, symbol: str, risk: str = "high", confidence: str = "medium"
 def _run_adversarial_pass(blast_items, diff, cfg, context_pack):
     """Mirrors the adversarial pass in luna.py."""
     if not (context_pack is not None and blast_items):
-        return blast_items
+        return blast_items, []
     uncertain = [i for i in blast_items if i.risk == "high" and i.confidence != "high"]
     certain = [i for i in blast_items if not (i.risk == "high" and i.confidence != "high")]
     if uncertain:
         files = {i.file for i in uncertain}
         ctx = build_adversarial_context(diff, files, context_pack)
-        uncertain = adversarial_verify(uncertain, ctx, cfg)
-    return certain + uncertain
+        uncertain, refuted = adversarial_verify(uncertain, ctx, cfg)
+    else:
+        refuted = []
+    return certain + uncertain, refuted
 
 
 def test_adversarial_called_for_uncertain_high(monkeypatch):
@@ -76,9 +78,10 @@ def test_adversarial_refuted_finding_removed(monkeypatch):
     refute = json.dumps([{"index": 0, "confirmed": False, "reason": "调用方不使用返回值"}])
 
     with patch("phases.adversarial_verifier.call_claude", return_value=refute):
-        result = _run_adversarial_pass(items, PRIVATE_DIFF, cfg, pack)
+        survivors, refuted = _run_adversarial_pass(items, PRIVATE_DIFF, cfg, pack)
 
-    assert result == []
+    assert survivors == []
+    assert len(refuted) == 1
 
 
 def test_adversarial_error_keeps_original(monkeypatch):
@@ -89,6 +92,6 @@ def test_adversarial_error_keeps_original(monkeypatch):
     items = [_item("src/private/a.ts", "funcA")]
 
     with patch("phases.adversarial_verifier.call_claude", side_effect=RuntimeError("timeout")):
-        result = _run_adversarial_pass(items, PRIVATE_DIFF, cfg, pack)
+        survivors, refuted = _run_adversarial_pass(items, PRIVATE_DIFF, cfg, pack)
 
-    assert len(result) == 1
+    assert len(survivors) == 1

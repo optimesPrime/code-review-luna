@@ -388,7 +388,8 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
                 if _uncertain:
                     _files = {i.file for i in _uncertain}
                     _ctx = _build_ctx(diff, _files, context_pack)
-                    _uncertain = _adv_verify(_uncertain, _ctx, cfg)
+                    _uncertain, _refuted = _adv_verify(_uncertain, _ctx, cfg)
+                    report.adversarial_refuted = _refuted
                 blast_items = _certain + _uncertain
             except Exception as _adv_err:
                 if _rcon:

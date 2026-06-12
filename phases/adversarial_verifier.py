@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from api_client import call_claude
@@ -9,6 +10,12 @@ if TYPE_CHECKING:
     from phases.blast_radius import BlastRadiusItem
     from phases.context_pack import ContextPack
     from config import Config
+
+
+@dataclass
+class RefutedFinding:
+    item: "BlastRadiusItem"
+    adv_reason: str
 
 _SYSTEM = """\
 你是代码审查质疑者。你将收到一批"high 风险但置信度非 high"的审查发现，以及相关代码上下文。
@@ -88,13 +95,13 @@ def adversarial_verify(
     items: list["BlastRadiusItem"],
     context_snippet: str,
     config: "Config | None",
-) -> list["BlastRadiusItem"]:
+) -> tuple[list["BlastRadiusItem"], list[RefutedFinding]]:
     if not items:
-        return []
+        return [], []
 
     to_verify = [(i, item) for i, item in enumerate(items) if item.risk == "high" and item.confidence != "high"]
     if not to_verify:
-        return list(items)
+        return list(items), []
 
     findings_text = json.dumps(
         [{"index": i, "file": item.file, "symbol": item.symbol, "reason": item.reason, "confidence": item.confidence}
@@ -111,8 +118,16 @@ def adversarial_verify(
         match = re.search(r"\[.*\]", raw, re.DOTALL)
         verdicts = json.loads(match.group()) if match else []
     except Exception:
-        return list(items)
+        return list(items), []
 
-    refuted = {v["index"] for v in verdicts if isinstance(v, dict) and not v.get("confirmed", True)}
+    verdict_map = {v["index"]: v for v in verdicts if isinstance(v, dict)}
     verify_indices = {i for i, _ in to_verify}
-    return [item for i, item in enumerate(items) if not (i in verify_indices and i in refuted)]
+
+    survivors: list["BlastRadiusItem"] = []
+    refuted: list[RefutedFinding] = []
+    for i, item in enumerate(items):
+        if i in verify_indices and not verdict_map.get(i, {}).get("confirmed", True):
+            refuted.append(RefutedFinding(item=item, adv_reason=verdict_map[i].get("reason", "")))
+        else:
+            survivors.append(item)
+    return survivors, refuted

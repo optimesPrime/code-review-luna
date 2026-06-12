@@ -25,6 +25,7 @@ class ReviewReport:
     token_savings: dict = field(default_factory=dict)
     migration_items: list = field(default_factory=list)
     api_change_items: list = field(default_factory=list)
+    adversarial_refuted: list = field(default_factory=list)
 
 
 def _backend_section(items: list[BackendReviewItem]) -> str:

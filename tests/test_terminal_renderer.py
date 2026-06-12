@@ -263,3 +263,51 @@ class TestRenderReview:
         _render_rich(console, r, rt, quiet=False)
         output = buf.getvalue()
         assert "测试关注点1" in output
+
+
+class TestAdversarialRefutedSection:
+    def _make_runtime(self):
+        from runtime_context import RuntimeContext
+        return RuntimeContext()
+
+    def test_refuted_section_shown_when_present(self):
+        from phases.adversarial_verifier import RefutedFinding
+        from phases.blast_radius import BlastRadiusItem
+        from terminal_renderer import _render_rich, RICH_AVAILABLE
+        import io
+        if not RICH_AVAILABLE:
+            pytest.skip("Rich not installed")
+        from rich.console import Console
+
+        item = BlastRadiusItem(
+            file="src/a.ts", line=42, symbol="funcPay",
+            risk="high", confidence="medium", reason="可能影响支付",
+        )
+        r = _make_report()
+        r.adversarial_refuted = [RefutedFinding(item=item, adv_reason="调用方不使用返回值")]
+
+        buf = io.StringIO()
+        console = Console(file=buf, no_color=True, highlight=False)
+        _render_rich(console, r, self._make_runtime(), quiet=False)
+        output = buf.getvalue()
+
+        assert "反驳" in output
+        assert "funcPay" in output
+        assert "调用方不使用返回值" in output
+
+    def test_refuted_section_absent_when_empty(self):
+        from terminal_renderer import _render_rich, RICH_AVAILABLE
+        import io
+        if not RICH_AVAILABLE:
+            pytest.skip("Rich not installed")
+        from rich.console import Console
+
+        r = _make_report()
+        r.adversarial_refuted = []
+
+        buf = io.StringIO()
+        console = Console(file=buf, no_color=True, highlight=False)
+        _render_rich(console, r, self._make_runtime(), quiet=False)
+        output = buf.getvalue()
+
+        assert "反驳过滤" not in output
