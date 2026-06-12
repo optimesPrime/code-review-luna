@@ -64,9 +64,16 @@ def test_low_risk_skips_llm():
     assert len(result) == 1
 
 
-def test_invalid_llm_response_keeps_all():
+def test_no_json_array_in_response_keeps_all():
     finding = _item()
     with _mock_llm("not valid json"):
+        result = adversarial_verify([finding], context_snippet="", config=None)
+    assert len(result) == 1
+
+
+def test_llm_exception_keeps_all():
+    finding = _item()
+    with patch("phases.adversarial_verifier.call_claude", side_effect=RuntimeError("network error")):
         result = adversarial_verify([finding], context_snippet="", config=None)
     assert len(result) == 1
 
