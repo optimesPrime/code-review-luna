@@ -40,7 +40,7 @@ def filter_diff_for_files(diff: str, files: set[str]) -> str:
             parts = line.split(" b/", 1)
             diff_path = parts[1].strip() if len(parts) == 2 else ""
             active = any(
-                diff_path == f or diff_path.endswith("/" + f) or f.endswith("/" + diff_path)
+                diff_path == f or diff_path.endswith("/" + f)
                 for f in files
             )
             file_header = [line]
