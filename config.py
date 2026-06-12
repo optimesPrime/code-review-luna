@@ -27,6 +27,7 @@ class ReviewConfig:
     confirm_before_fix: bool = True
     max_diff_chars: int = 120_000
     apply_enabled: bool = False
+    max_parallel_domains: int = 3
 
 
 @dataclass
@@ -70,6 +71,12 @@ class APIChangeConfig:
 
 
 @dataclass
+class DomainEntry:
+    name: str
+    patterns: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     api: APIConfig = field(default_factory=APIConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
@@ -79,6 +86,7 @@ class Config:
     backend: BackendConfig = field(default_factory=BackendConfig)
     migration: MigrationConfig = field(default_factory=MigrationConfig)
     api_change: APIChangeConfig = field(default_factory=APIChangeConfig)
+    domains: list[DomainEntry] = field(default_factory=list)
 
 
 def load_config(path: str = "config.yaml") -> Config:
@@ -118,5 +126,15 @@ def load_config(path: str = "config.yaml") -> Config:
     if b := raw.get("backend"):
         known = BackendConfig.__dataclass_fields__.keys()
         cfg.backend = BackendConfig(**{k: v for k, v in b.items() if k in known})
+
+    if raw_domains := raw.get("domains"):
+        cfg.domains = [
+            DomainEntry(
+                name=d["name"],
+                patterns=d.get("patterns", []),
+            )
+            for d in raw_domains
+            if isinstance(d, dict) and "name" in d
+        ]
 
     return cfg
