@@ -115,7 +115,7 @@ def render(report: ReviewReport) -> str:
 """
 
 
-def save(report: ReviewReport, output_dir: str) -> str:
+def save(report: ReviewReport, output_dir: str, runtime_ctx=None) -> str:
     import dataclasses
     import json
     d = Path(output_dir)
@@ -123,13 +123,45 @@ def save(report: ReviewReport, output_dir: str) -> str:
     safe_ts = report.timestamp.replace(":", "").replace(" ", "_")
     path = d / f"{safe_ts}_report.md"
     path.write_text(render(report), encoding="utf-8")
+
+    # latest.json — fix_candidates（luna fix 使用）
     latest = d / "latest.json"
     latest.write_text(
         json.dumps(
             {"fix_candidates": [dataclasses.asdict(fc) for fc in report.fix_candidates]},
-            ensure_ascii=False,
-            indent=2,
+            ensure_ascii=False, indent=2,
         ),
         encoding="utf-8",
     )
+
+    # {timestamp}_report.json — 结构化历史 sidecar（失败不影响主报告）
+    try:
+        all_items = (
+            list(report.blast_radius_items)
+            + list(report.code_quality_items)
+            + list(report.backend_review_items)
+        )
+        from terminal_renderer import build_verdict
+        verdict_label, _ = build_verdict(report)
+        sidecar: dict = {
+            "timestamp": report.timestamp,
+            "commit": getattr(runtime_ctx, "commit_hash", "") if runtime_ctx else "",
+            "verdict": verdict_label,
+            "high":   sum(1 for i in all_items if i.risk == "high"),
+            "medium": sum(1 for i in all_items if i.risk == "medium"),
+            "low":    sum(1 for i in all_items if i.risk == "low"),
+            "elapsed": getattr(runtime_ctx, "elapsed_seconds", 0.0) if runtime_ctx else 0.0,
+            "items": [
+                {"file": i.file, "line": i.line, "risk": i.risk,
+                 "symbol": getattr(i, "symbol", ""),
+                 "reason": getattr(i, "reason", getattr(i, "description", ""))}
+                for i in all_items
+            ],
+            "fix_candidates": [dataclasses.asdict(fc) for fc in report.fix_candidates],
+        }
+        sidecar_path = d / f"{safe_ts}_report.json"
+        sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass  # sidecar 失败不影响 Markdown 报告和 latest.json
+
     return str(path)

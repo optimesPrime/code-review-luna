@@ -71,11 +71,14 @@ class BackendContextPack:
     edges: list[BackendGraphEdge]
     impact_paths: list[BackendImpactPath]
     risk_rules_hit: list[str]
-    uncertain_edges: list[BackendGraphEdge]
     review_focus: list[str]
     related_snippets: list[str]
 
     def to_dict(self) -> dict:
+        _risk_order = {"high": 0, "medium": 1, "low": 2}
+        top_paths = sorted(
+            self.impact_paths, key=lambda p: _risk_order.get(p.risk, 3)
+        )[:25]
         return {
             "changed_symbols": [
                 {
@@ -98,7 +101,7 @@ class BackendContextPack:
                     "evidence": e.evidence,
                     "confidence": e.confidence,
                 }
-                for e in self.edges
+                for e in self.edges[:30]
             ],
             "impact_paths": [
                 {
@@ -109,19 +112,9 @@ class BackendContextPack:
                     "rule_hits": p.rule_hits,
                     "needs_human_review": p.needs_human_review,
                 }
-                for p in self.impact_paths
+                for p in top_paths
             ],
             "risk_rules_hit": self.risk_rules_hit,
-            "uncertain_edges": [
-                {
-                    "source": e.source,
-                    "target": e.target,
-                    "edge_type": e.edge_type,
-                    "evidence": e.evidence,
-                    "confidence": e.confidence,
-                }
-                for e in self.uncertain_edges
-            ],
             "review_focus": self.review_focus,
             "related_snippets": self.related_snippets,
         }

@@ -13,3 +13,4 @@ class RuntimeContext:
     backend_review_status: str = "skipped"  # "skipped" | "ran" | "error"
     elapsed_seconds: float = 0.0
     report_path: str = ""
+    commit_hash: str = ""

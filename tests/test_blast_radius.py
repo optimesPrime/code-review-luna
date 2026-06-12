@@ -145,3 +145,9 @@ def test_blast_radius_prompt_contains_review_questions(monkeypatch):
         analyze("diff --git a/foo.js b/foo.js\n", "", cfg, context_pack=mock_pack)
 
     assert "测试问题1" in captured["system"]
+
+
+def test_blast_radius_system_prompt_explains_file_history():
+    """_SYSTEM_PROMPT 应包含 file_history 字段说明，让 LLM 知道如何利用历史数据。"""
+    from phases.blast_radius import _SYSTEM_PROMPT
+    assert "file_history" in _SYSTEM_PROMPT

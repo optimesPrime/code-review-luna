@@ -33,6 +33,14 @@ _SYSTEM_PROMPT = """\
 - impact_paths: 影响链路，每条附有风险等级、置信度和证据
 - related_rules: 相关团队规则
 - review_focus: 重点审查方向
+- file_history: 改动文件的历史问题记录（flagged_count=历史被标记次数，recent_issues=最近问题）
+- caller_contexts: 改动符号的实际调用点采样，每个符号附 ±5 行代码片段
+
+caller_contexts 使用规则（重要）：
+  - callers 为空 → 该符号在项目内无直接调用，内部改动风险低，不应盲目标 high；
+  - snippet 中调用方未使用改动的属性/返回值 → 不应将其标为 high；
+  - total_callers_found 远大于已展示数量 → 影响广泛，应提高警惕；
+  - 没有 caller_contexts 字段时，按 impact_paths 常规判断。
 
 基于上下文包中的证据链评估风险。高风险低置信度项标注 needs_human_review=true。
 
@@ -46,6 +54,11 @@ _SYSTEM_PROMPT = """\
 - reason: 影响原因（中文）
 - suggestion: 修复建议，无则 null
 - needs_human_review: bool
+
+file_history 字段记录了改动文件在历史审查中的问题模式：
+  - flagged_count 高（≥3）说明该文件是反复出现问题的"慢性病"区域，应提高风险等级；
+  - recent_issues 里的 high 风险说明该文件近期已有严重问题，本次改动更需谨慎。
+  - 若 file_history 为空，说明没有历史数据，按常规判断即可。
 
 只输出 JSON 数组，不要其他内容。"""
 

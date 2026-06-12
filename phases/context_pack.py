@@ -13,8 +13,14 @@ class ContextPack:
     related_tests: list[str]
     review_focus: list[str] = field(default_factory=list)
     review_questions: list[str] = field(default_factory=list)
+    file_history: dict = field(default_factory=dict)  # {file: {flagged_count, recent_issues}}
+    caller_contexts: list = field(default_factory=list)  # list[SymbolCallers]
 
     def to_dict(self) -> dict:
+        _risk_order = {"high": 0, "medium": 1, "low": 2}
+        top_paths = sorted(
+            self.impact_paths, key=lambda p: _risk_order.get(p.risk, 3)
+        )[:25]
         return {
             "changed_symbols": [
                 {
@@ -34,11 +40,29 @@ class ContextPack:
                     "evidence": p.evidence,
                     "needs_human_review": p.needs_human_review,
                 }
-                for p in self.impact_paths
+                for p in top_paths
             ],
             "related_rules": self.related_rules,
-            "related_tests": self.related_tests,
+            "related_tests": self.related_tests[:20],
             "review_focus": self.review_focus,
+            "file_history": self.file_history,
+            "caller_contexts": [
+                {
+                    "symbol": sc.symbol,
+                    "total_callers_found": sc.total_count,
+                    "callers": [
+                        {
+                            "file": c.file,
+                            "line": c.line,
+                            "snippet": c.snippet,
+                            "language": c.language,
+                        }
+                        for c in sc.callers
+                    ],
+                }
+                for sc in self.caller_contexts
+                if sc.callers
+            ],
         }
 
 

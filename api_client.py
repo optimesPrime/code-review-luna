@@ -10,7 +10,10 @@ def call_claude(system_prompt: str, user_prompt: str, config: Config) -> str:
 
 
 def _call_anthropic(system_prompt: str, user_prompt: str, config: Config) -> str:
-    client = Anthropic(api_key=config.api.api_key)
+    kwargs = {"api_key": config.api.api_key}
+    if config.api.base_url:
+        kwargs["base_url"] = config.api.base_url
+    client = Anthropic(**kwargs)
     response = client.messages.create(
         model=config.api.model,
         max_tokens=4096,

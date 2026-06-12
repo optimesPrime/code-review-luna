@@ -243,3 +243,46 @@ def test_caller_contexts_skips_self_file(tmp_path):
     for sc in results:
         for caller in sc.callers:
             assert "g.py" not in caller.file
+
+
+# ---------------------------------------------------------------------------
+# 方案 A：GraphDB importer fallback
+# ---------------------------------------------------------------------------
+
+def test_build_caller_contexts_falls_back_to_module_name_grep(tmp_path):
+    """当 grep symbol 名找不到直接调用时，改用模块名 grep 找工厂函数使用方式。"""
+    # ContextPack 通过工厂函数使用，外部不写 ContextPack(...)
+    sym_file = tmp_path / "context_pack.py"
+    sym_file.write_text("class ContextPack:\n    pass\n\ndef build_context_pack():\n    return ContextPack()\n")
+
+    # luna.py 用工厂函数，并通过模块变量访问属性
+    luna_file = tmp_path / "luna.py"
+    luna_file.write_text(
+        "from context_pack import build_context_pack\n"
+        "context_pack = build_context_pack()\n"   # 变量名含模块名
+        "context_pack.review_questions = []\n"
+    )
+
+    symbols = [ChangedSymbol(
+        file=str(sym_file), symbol="ContextPack",
+        symbol_type="class", start_line=1, change_type="modified",
+    )]
+    results = build_caller_contexts(symbols, str(tmp_path), ignore_dirs=[])
+    # 通过模块名 fallback，luna.py 里 context_pack.review_questions 应被找到
+    all_files = [c.file for sc in results for c in sc.callers]
+    assert any("luna.py" in f for f in all_files)
+
+
+def test_build_caller_contexts_no_fallback_when_grep_finds_results(tmp_path):
+    """grep 能找到直接调用时不触发 fallback，结果不重复。"""
+    sym_file = tmp_path / "utils.py"
+    sym_file.write_text("def my_func(): pass\n")
+    (tmp_path / "app.py").write_text("from utils import my_func\nmy_func()\n")
+
+    symbols = [ChangedSymbol(
+        file=str(sym_file), symbol="my_func",
+        symbol_type="function", start_line=1, change_type="modified",
+    )]
+    results = build_caller_contexts(symbols, str(tmp_path), ignore_dirs=[])
+    all_files = [c.file for sc in results for c in sc.callers]
+    assert any("app.py" in f for f in all_files)
