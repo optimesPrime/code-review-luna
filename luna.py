@@ -41,20 +41,27 @@ import phases.backend_review as backend_review
 
 DEFAULT_CONFIG = Path.home() / ".luna" / "config.yaml"
 
-PROVIDERS = {
-    "claude": {
-        "provider": "anthropic",
-        "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-        "default_model": "claude-sonnet-4-6",
-        "api_key_env": "ANTHROPIC_API_KEY",
-    },
-    "gpt": {
-        "provider": "openai",
-        "models": ["gpt-5.5", "gpt-4o", "gpt-4o-mini"],
-        "default_model": "gpt-5.5",
-        "api_key_env": "OPENAI_API_KEY",
-    },
-}
+_NON_CHAT_KEYWORDS = (
+    "embedding", "whisper", "tts-", "dall-e", "moderation",
+    "babbage", "davinci-002", "ada-", "curie-",
+)
+
+
+def _fetch_models(base_url: str, api_key: str) -> list[str]:
+    from openai import OpenAI
+    kwargs: dict = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    try:
+        client = OpenAI(**kwargs)
+        all_models = [m.id for m in client.models.list().data]
+        chat_models = [
+            m for m in all_models
+            if not any(kw in m.lower() for kw in _NON_CHAT_KEYWORDS)
+        ]
+        return sorted(chat_models)
+    except Exception:
+        return []
 
 
 _FRONTEND_EXTS = {".js", ".ts", ".jsx", ".tsx", ".vue", ".mjs", ".cjs"}
@@ -509,47 +516,69 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
 @cli.command()
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
 def switch(config_path):
-    """切换 AI 提供商（claude / gpt）"""
+    """配置中转站地址、API Key 和模型。"""
+    import os as _os
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
 
-    current_provider = raw.get("api", {}).get("provider", "anthropic")
-    current_model = raw.get("api", {}).get("model", "")
-    current_base_url = raw.get("api", {}).get("base_url", "")
-    click.echo(f"当前配置：provider={current_provider}  model={current_model}")
-    click.echo("")
+    api_raw = raw.get("api", {})
+    current_base_url = api_raw.get("base_url", "")
+    current_key = api_raw.get("key", "")
+    current_model = api_raw.get("model", "")
 
-    provider_choice = click.prompt(
-        "选择 provider",
-        type=click.Choice(["claude", "gpt"]),
-        default="claude" if current_provider == "anthropic" else "gpt",
-    )
-    info = PROVIDERS[provider_choice]
-
-    model_list = "  /  ".join(info["models"])
-    click.echo(f"可用模型：{model_list}")
-    model = click.prompt("选择模型", default=info["default_model"])
+    click.echo(f"\n当前配置：{'中转站=' + current_base_url if current_base_url else '官方地址'}  model={current_model}\n")
 
     base_url = click.prompt(
-        "中转地址（无需代理可直接回车留空）",
-        default=current_base_url if current_provider == info["provider"] else "",
-    )
+        "中转站地址（直接回车使用官方 OpenAI）",
+        default=current_base_url,
+        show_default=bool(current_base_url),
+    ).strip()
+
+    key_hint = f"{current_key[:8]}..." if len(current_key) > 8 else ""
+    key_label = f"API Key（当前：{key_hint}，直接回车保留）" if key_hint else "API Key"
+    new_key = click.prompt(key_label, default="", show_default=False).strip()
+    api_key = new_key or current_key
+
+    if not api_key:
+        click.echo("❌ 未填写 API Key，已取消")
+        return
+
+    click.echo("\n正在拉取模型列表...", nl=False)
+    models = _fetch_models(base_url, api_key)
+
+    if not models:
+        click.echo(" 失败（检查地址和 Key）")
+        model = click.prompt("手动输入模型名称", default=current_model).strip()
+    else:
+        click.echo(f" {len(models)} 个模型\n")
+        for i, m in enumerate(models, 1):
+            click.echo(f"  {i:>3}. {m}")
+        click.echo("")
+        while True:
+            choice = click.prompt("输入编号").strip()
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(models):
+                    model = models[idx]
+                    break
+            except ValueError:
+                pass
+            click.echo("  请输入列表中的数字")
 
     if "api" not in raw:
         raw["api"] = {}
-    raw["api"]["provider"] = info["provider"]
-    raw["api"]["model"] = model
-    raw["api"]["api_key_env"] = info["api_key_env"]
     raw["api"]["base_url"] = base_url
+    raw["api"]["key"] = api_key
+    raw["api"]["model"] = model
 
-    cfg_path.write_text(yaml.dump(raw, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+    tmp = cfg_path.with_suffix(".tmp")
+    tmp.write_text(yaml.dump(raw, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+    _os.replace(tmp, cfg_path)
 
-    click.echo("")
-    click.echo(f"已切换：{provider_choice}  ({model})")
+    click.echo(f"\n✅ 已保存  model={model}")
     if base_url:
-        click.echo(f"中转地址：{base_url}")
-    click.echo(f"API Key 环境变量：{info['api_key_env']}")
+        click.echo(f"   中转站：{base_url}")
 
 
 @cli.command("fix")

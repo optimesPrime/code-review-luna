@@ -1,29 +1,8 @@
-from anthropic import Anthropic
 from openai import OpenAI
 from config import Config
 
 
 def call_claude(system_prompt: str, user_prompt: str, config: Config) -> str:
-    if config.api.provider == "openai":
-        return _call_openai(system_prompt, user_prompt, config)
-    return _call_anthropic(system_prompt, user_prompt, config)
-
-
-def _call_anthropic(system_prompt: str, user_prompt: str, config: Config) -> str:
-    kwargs = {"api_key": config.api.api_key}
-    if config.api.base_url:
-        kwargs["base_url"] = config.api.base_url
-    client = Anthropic(**kwargs)
-    response = client.messages.create(
-        model=config.api.model,
-        max_tokens=4096,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    return response.content[0].text
-
-
-def _call_openai(system_prompt: str, user_prompt: str, config: Config) -> str:
     kwargs = {"api_key": config.api.api_key}
     if config.api.base_url:
         kwargs["base_url"] = config.api.base_url
@@ -36,7 +15,7 @@ def _call_openai(system_prompt: str, user_prompt: str, config: Config) -> str:
             {"role": "user", "content": user_prompt},
         ],
     )
-    # Some proxy endpoints return content directly as a string
+    # 部分非标准代理端点直接返回字符串而非 SDK Response 对象
     if isinstance(response, str):
         return response
     return response.choices[0].message.content

@@ -34,7 +34,7 @@ def test_api_key_from_env(monkeypatch):
 def test_api_key_missing_raises(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = load_config("nonexistent.yaml")
-    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(ValueError, match="luna switch"):
         _ = cfg.api.api_key
 
 

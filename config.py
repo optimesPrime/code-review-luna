@@ -11,13 +11,16 @@ class APIConfig:
     model: str = "claude-sonnet-4-6"
     api_key_env: str = "ANTHROPIC_API_KEY"
     base_url: str = ""
+    key: str = ""  # 直接存储的 API key，由 luna switch 写入
 
     @property
     def api_key(self) -> str:
-        key = os.environ.get(self.api_key_env, "")
-        if not key:
-            raise ValueError(f"环境变量 {self.api_key_env} 未设置")
-        return key
+        if self.key.strip():
+            return self.key.strip()
+        env_key = os.environ.get(self.api_key_env, "")
+        if not env_key:
+            raise ValueError(f"未配置 API Key，请运行 luna switch")
+        return env_key
 
 
 @dataclass
