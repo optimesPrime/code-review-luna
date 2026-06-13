@@ -46,6 +46,12 @@ _NON_CHAT_KEYWORDS = (
     "babbage", "davinci-002", "ada-", "curie-",
 )
 
+_CLAUDE_MODELS = [
+    ("claude-haiku-4-5-20251001", "低档 · 快速"),
+    ("claude-sonnet-4-6",         "中档 · 均衡"),
+    ("claude-opus-4-8",           "高档 · 强力"),
+]
+
 
 def _fetch_models(base_url: str, api_key: str) -> list[str]:
     from openai import OpenAI
@@ -62,6 +68,22 @@ def _fetch_models(base_url: str, api_key: str) -> list[str]:
         return sorted(chat_models)
     except Exception:
         return []
+
+
+def _pick_model_interactive(models: list[str]) -> str:
+    """展示编号列表，返回用户选择的模型名。"""
+    for i, m in enumerate(models, 1):
+        click.echo(f"  {i:>3}. {m}")
+    click.echo("")
+    while True:
+        choice = click.prompt("输入编号").strip()
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(models):
+                return models[idx]
+        except ValueError:
+            pass
+        click.echo("  请输入列表中的数字")
 
 
 _FRONTEND_EXTS = {".js", ".ts", ".jsx", ".tsx", ".vue", ".mjs", ".cjs"}
@@ -516,58 +538,96 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
 @cli.command()
 @click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
 def switch(config_path):
-    """配置中转站地址、API Key 和模型。"""
+    """配置 AI 接入方式、API Key 和模型。"""
     import os as _os
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
 
     api_raw = raw.get("api", {})
+    current_provider = api_raw.get("provider", "")
     current_base_url = api_raw.get("base_url", "")
     current_key = api_raw.get("key", "")
     current_model = api_raw.get("model", "")
 
-    click.echo(f"\n当前配置：{'中转站=' + current_base_url if current_base_url else '官方地址'}  model={current_model}\n")
+    # 显示当前状态
+    if current_base_url:
+        current_desc = f"中转站 {current_base_url}"
+    elif current_provider == "anthropic":
+        current_desc = "直连 Claude"
+    else:
+        current_desc = "直连 OpenAI"
+    click.echo(f"\n当前配置：{current_desc}  model={current_model}\n")
 
-    base_url = click.prompt(
-        "中转站地址（直接回车使用官方 OpenAI）",
-        default=current_base_url,
-        show_default=bool(current_base_url),
-    ).strip()
+    # 选择接入方式
+    click.echo("接入方式：")
+    click.echo("  1. 直连 Claude（Anthropic 官方）")
+    click.echo("  2. 直连 OpenAI（OpenAI 官方）")
+    click.echo("  3. 中转站（OpenAI 兼容接口）")
+    click.echo("")
+    while True:
+        mode = click.prompt("输入编号").strip()
+        if mode in ("1", "2", "3"):
+            break
+        click.echo("  请输入 1、2 或 3")
 
+    # 询问 Key
     key_hint = f"{current_key[:8]}..." if len(current_key) > 8 else ""
     key_label = f"API Key（当前：{key_hint}，直接回车保留）" if key_hint else "API Key"
     new_key = click.prompt(key_label, default="", show_default=False).strip()
     api_key = new_key or current_key
-
     if not api_key:
         click.echo("❌ 未填写 API Key，已取消")
         return
 
-    click.echo("\n正在拉取模型列表...", nl=False)
-    models = _fetch_models(base_url, api_key)
-
-    if not models:
-        click.echo(" 失败（检查地址和 Key）")
-        model = click.prompt("手动输入模型名称", default=current_model).strip()
-    else:
-        click.echo(f" {len(models)} 个模型\n")
-        for i, m in enumerate(models, 1):
-            click.echo(f"  {i:>3}. {m}")
+    # 模式特定逻辑
+    if mode == "1":
+        # 直连 Claude：静态模型列表
+        provider = "anthropic"
+        base_url = ""
         click.echo("")
-        while True:
-            choice = click.prompt("输入编号").strip()
-            try:
-                idx = int(choice) - 1
-                if 0 <= idx < len(models):
-                    model = models[idx]
-                    break
-            except ValueError:
-                pass
-            click.echo("  请输入列表中的数字")
+        for i, (m, label) in enumerate(_CLAUDE_MODELS, 1):
+            click.echo(f"  {i}. {m}  （{label}）")
+        click.echo("")
+        model = _pick_model_interactive([m for m, _ in _CLAUDE_MODELS])
 
+    elif mode == "2":
+        # 直连 OpenAI：动态拉取
+        provider = "openai"
+        base_url = ""
+        click.echo("\n正在拉取模型列表...", nl=False)
+        models = _fetch_models("", api_key)
+        if not models:
+            click.echo(" 失败（检查 Key）")
+            model = click.prompt("手动输入模型名称", default=current_model).strip()
+        else:
+            click.echo(f" {len(models)} 个模型\n")
+            model = _pick_model_interactive(models)
+
+    else:
+        # 中转站
+        provider = "proxy"
+        base_url = click.prompt(
+            "中转站地址",
+            default=current_base_url,
+            show_default=bool(current_base_url),
+        ).strip()
+        if not base_url:
+            click.echo("❌ 中转站地址不能为空，已取消")
+            return
+        click.echo("\n正在拉取模型列表...", nl=False)
+        models = _fetch_models(base_url, api_key)
+        if not models:
+            click.echo(" 失败（检查地址和 Key）")
+            model = click.prompt("手动输入模型名称", default=current_model).strip()
+        else:
+            click.echo(f" {len(models)} 个模型\n")
+            model = _pick_model_interactive(models)
+
+    # 写入配置
     if "api" not in raw:
         raw["api"] = {}
+    raw["api"]["provider"] = provider
     raw["api"]["base_url"] = base_url
     raw["api"]["key"] = api_key
     raw["api"]["model"] = model
