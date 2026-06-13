@@ -73,6 +73,17 @@ class APIChangeConfig:
 
 
 @dataclass
+class GitLabConfig:
+    url: str = "https://gitlab.com"
+    token_env: str = "GITLAB_TOKEN"
+    token: str = ""            # 直接存储的 token，由 luna gitlab 写入
+    project_id: str = ""
+    bot_note_prefix: str = "🌙 Luna Review"
+    post_inline: bool = True
+    min_risk: str = "medium"   # "high" | "medium" | "low"
+
+
+@dataclass
 class Config:
     api: APIConfig = field(default_factory=APIConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
@@ -82,6 +93,7 @@ class Config:
     backend: BackendConfig = field(default_factory=BackendConfig)
     migration: MigrationConfig = field(default_factory=MigrationConfig)
     api_change: APIChangeConfig = field(default_factory=APIChangeConfig)
+    gitlab: GitLabConfig = field(default_factory=GitLabConfig)
 
 
 def load_config(path: str = "config.yaml") -> Config:
@@ -121,5 +133,9 @@ def load_config(path: str = "config.yaml") -> Config:
     if b := raw.get("backend"):
         known = BackendConfig.__dataclass_fields__.keys()
         cfg.backend = BackendConfig(**{k: v for k, v in b.items() if k in known})
+
+    if gl := raw.get("gitlab"):
+        known = GitLabConfig.__dataclass_fields__.keys()
+        cfg.gitlab = GitLabConfig(**{k: v for k, v in gl.items() if k in known})
 
     return cfg

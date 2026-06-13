@@ -86,6 +86,58 @@ def _pick_model_interactive(models: list[str]) -> str:
         click.echo("  请输入列表中的数字")
 
 
+def _analyze_diff(diff: str, cfg) -> "ReviewReport":
+    """Blast radius + adversarial verify + quality on an arbitrary diff string."""
+    import datetime
+    from reporter import ReviewReport
+    from phases import blast_radius as _blast, code_quality as _quality
+    from phases.context_pack import build_context_pack
+    from phases.symbol_locator import extract_changed_symbols_from_diff
+
+    report = ReviewReport(
+        timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        diff_summary=diff[:200],
+    )
+
+    context_pack = None
+    try:
+        symbols = extract_changed_symbols_from_diff(diff)
+        context_pack = build_context_pack(symbols, [], related_rules=[], related_tests=[])
+        report.changed_symbols = [{"name": s.symbol, "file": s.file} for s in symbols]
+    except Exception:
+        pass
+
+    blast_items = []
+    try:
+        blast_items, _ = _blast.analyze(diff, "", cfg, context_pack=context_pack, project_root=".", detail_level="standard")
+    except Exception:
+        pass
+
+    if context_pack and blast_items:
+        try:
+            from phases.adversarial_verifier import adversarial_verify, build_adversarial_context
+            uncertain = [i for i in blast_items if i.risk == "high" and i.confidence != "high"]
+            certain   = [i for i in blast_items if not (i.risk == "high" and i.confidence != "high")]
+            if uncertain:
+                files = {i.file for i in uncertain}
+                ctx = build_adversarial_context(diff, files, context_pack)
+                uncertain, refuted = adversarial_verify(uncertain, ctx, cfg)
+                report.adversarial_refuted = refuted
+            blast_items = certain + uncertain
+        except Exception:
+            pass
+
+    report.blast_radius_items = blast_items
+
+    try:
+        quality_items, _ = _quality.analyze(diff, "", cfg, project_root=".", detail_level="standard")
+        report.code_quality_items = quality_items
+    except Exception:
+        pass
+
+    return report
+
+
 _FRONTEND_EXTS = {".js", ".ts", ".jsx", ".tsx", ".vue", ".mjs", ".cjs"}
 
 
@@ -533,6 +585,144 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     path = save(report, out_dir, runtime_ctx=runtime)
     runtime.report_path = str(path)
     render_review(report, runtime, fmt=fmt, quiet=quiet)
+
+
+@cli.command("gitlab")
+@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
+def gitlab_cmd(config_path):
+    """配置 GitLab 地址、Token 和项目，一次设置永久生效。"""
+    import os as _os
+    cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+
+    gl = raw.get("gitlab", {})
+    cur_url     = gl.get("url", "https://gitlab.com")
+    cur_token   = gl.get("token", "")
+    cur_project = gl.get("project_id", "")
+    cur_min     = gl.get("min_risk", "medium")
+
+    click.echo("\n🦊 Luna GitLab 配置\n")
+
+    url = click.prompt(
+        "GitLab 地址",
+        default=cur_url,
+    ).strip()
+
+    token_hint  = f"{cur_token[:8]}..." if len(cur_token) > 8 else ""
+    token_label = f"Token（当前：{token_hint}，直接回车保留）" if token_hint else "Token（Personal Access Token）"
+    new_token   = click.prompt(token_label, default="", show_default=False).strip()
+    token       = new_token or cur_token
+    if not token:
+        click.echo("❌ Token 不能为空，已取消")
+        return
+
+    project_id = click.prompt(
+        "项目路径或数字 ID",
+        default=cur_project,
+        show_default=bool(cur_project),
+    ).strip()
+    if not project_id:
+        click.echo("❌ 项目 ID 不能为空，已取消")
+        return
+
+    min_risk = click.prompt(
+        "最低发评论风险等级",
+        type=click.Choice(["high", "medium", "low"]),
+        default=cur_min,
+    )
+
+    raw["gitlab"] = {
+        "url": url,
+        "token": token,
+        "project_id": project_id,
+        "min_risk": min_risk,
+        "post_inline": gl.get("post_inline", True),
+        "bot_note_prefix": gl.get("bot_note_prefix", "🌙 Luna Review"),
+        "token_env": "GITLAB_TOKEN",
+    }
+
+    tmp = cfg_path.with_suffix(".tmp")
+    tmp.write_text(yaml.dump(raw, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+    _os.replace(tmp, cfg_path)
+
+    click.echo(f"\n✅ 已保存")
+    click.echo(f"   地址：{url}")
+    click.echo(f"   项目：{project_id}")
+    click.echo(f"   最低风险：{min_risk}")
+
+
+@cli.command("review")
+@click.option("--mr", "mr_iid", type=int, required=True, help="GitLab MR IID")
+@click.option("--project", default=None, help="覆盖配置中的 project_id（格式：group/repo）")
+@click.option("--dry-run", is_flag=True, help="只审查，不发评论")
+@click.option("--config", "config_path", default=None, help="配置文件路径，默认 ~/.luna/config.yaml")
+def review_cmd(mr_iid, project, dry_run, config_path):
+    """从 GitLab MR 拉取 diff 并发布审查评论。"""
+    import os as _os
+    cfg = load_config(str(config_path or DEFAULT_CONFIG))
+
+    token = cfg.gitlab.token.strip() or _os.environ.get(cfg.gitlab.token_env, "")
+    if not token:
+        click.echo(f"❌ 未配置 GitLab Token，请运行 luna gitlab 或设置环境变量 {cfg.gitlab.token_env}", err=True)
+        raise SystemExit(1)
+
+    project_id = project or cfg.gitlab.project_id
+    if not project_id:
+        click.echo("❌ 未配置 gitlab.project_id，请在 config.yaml 设置或用 --project", err=True)
+        raise SystemExit(1)
+
+    from phases.gitlab_client import GitLabClient
+    from phases.mr_reviewer import map_items_to_positions, build_summary_comment, build_inline_comment
+
+    client = GitLabClient(cfg.gitlab.url, token, project_id)
+
+    click.echo(f"拉取 MR !{mr_iid} diff...", err=True)
+    try:
+        meta      = client.get_mr_meta(mr_iid)
+        diff      = client.get_mr_diff(mr_iid)
+        diff_refs = meta.get("diff_refs") or {}
+    except ValueError as e:
+        click.echo(f"❌ {e}", err=True)
+        raise SystemExit(1)
+
+    click.echo("运行审查...", err=True)
+    report = _analyze_diff(diff, cfg)
+
+    from terminal_renderer import render_review, build_fix_queue as _bfq
+    from runtime_context import RuntimeContext
+    runtime = RuntimeContext()
+    runtime.project_name = project_id
+    runtime.diff_scope   = f"MR !{mr_iid}"
+    report.fix_candidates = _bfq(report)
+    render_review(report, runtime, quiet=dry_run)
+
+    if dry_run:
+        click.echo("\n(dry-run：不发评论)", err=True)
+        return
+
+    summary = build_summary_comment(report, prefix=cfg.gitlab.bot_note_prefix)
+    try:
+        client.post_summary_comment(mr_iid, summary)
+        click.echo("✅ 总结评论已发布", err=True)
+    except ValueError as e:
+        click.echo(f"⚠️ 总结评论发布失败：{e}", err=True)
+
+    if cfg.gitlab.post_inline:
+        _risk_val = {"high": 2, "medium": 1, "low": 0}
+        _min      = _risk_val.get(cfg.gitlab.min_risk, 1)
+        all_items = list(report.blast_radius_items) + list(report.code_quality_items)
+        eligible  = [i for i in all_items if _risk_val.get(i.risk, 0) >= _min]
+        mapped    = map_items_to_positions(eligible, diff_refs)
+        posted    = 0
+        for item, refs in mapped:
+            body = build_inline_comment(item, prefix=cfg.gitlab.bot_note_prefix)
+            try:
+                client.post_inline_comment(mr_iid, body, item.file, item.line, refs)
+                posted += 1
+            except ValueError:
+                pass
+        click.echo(f"✅ 已发布 {posted} 条 inline 评论", err=True)
 
 
 @cli.command()
