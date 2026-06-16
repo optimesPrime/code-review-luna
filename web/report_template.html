@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Luna 代码审查报告</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; background: #f0f6ff; color: #1e293b; height: 100vh; overflow: hidden; }
+.topbar { height: 54px; background: #fff; border-bottom: 1px solid #dde8f5; display: flex; align-items: center; padding: 0 20px; gap: 14px; box-shadow: 0 2px 12px rgba(14,165,233,0.08); }
+.logo { font-size: 17px; font-weight: 800; color: #0ea5e9; letter-spacing: -0.5px; display:flex; align-items:center; gap:7px; }
+.logo-sub { font-size: 12px; font-weight: 400; color: #94a3b8; }
+.branch-pill { display:flex; align-items:center; gap:5px; background: linear-gradient(135deg,#e0f2fe,#f0f9ff); border: 1px solid #bae6fd; border-radius: 16px; padding: 3px 12px; font-size: 12px; color: #0284c7; font-weight: 600; }
+.spacer { flex: 1; }
+.top-stats { display:flex; gap:8px; }
+.stat-pill { font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 12px; display: flex; align-items: center; gap: 5px; }
+.stat-pill.danger { background: linear-gradient(135deg,#fee2e2,#fecdd3); color: #be123c; border: 1px solid #fda4af; }
+.stat-pill.warn   { background: linear-gradient(135deg,#fef3c7,#fde68a); color: #b45309; border: 1px solid #fcd34d; }
+.stat-pill.ok     { background: linear-gradient(135deg,#d1fae5,#bbf7d0); color: #065f46; border: 1px solid #6ee7b7; }
+.layout { display: flex; height: calc(100vh - 54px); }
+.sidebar { width: 300px; min-width: 300px; background: #fff; border-right: 1px solid #dde8f5; display: flex; flex-direction: column; overflow: hidden; box-shadow: 2px 0 16px rgba(14,165,233,0.05); }
+.sb-head { padding: 14px 14px 10px; border-bottom: 1px solid #f0f6ff; }
+.sb-title { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
+.filter-row { display:flex; gap:5px; flex-wrap:wrap; }
+.fpill { font-size: 10px; padding: 3px 9px; border-radius: 10px; cursor:pointer; border: 1px solid #e2eaf4; background: #f8fafc; color: #64748b; transition: all 0.15s; }
+.fpill:hover { border-color: #7dd3fc; color: #0284c7; }
+.fpill.on { background: linear-gradient(135deg,#e0f2fe,#f0f9ff); color: #0284c7; border-color: #7dd3fc; font-weight: 700; }
+.issue-list { flex: 1; overflow-y: auto; padding: 6px 8px; }
+.icard { padding: 11px 12px; border-radius: 10px; cursor: pointer; margin-bottom: 5px; border: 1px solid #f0f6ff; background: #fafcff; transition: all 0.18s; position: relative; overflow: hidden; }
+.icard::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: transparent; border-radius: 3px 0 0 3px; transition: background 0.15s; }
+.icard:hover { border-color: #bae6fd; background: #f0f9ff; box-shadow: 0 3px 12px rgba(14,165,233,0.10); }
+.icard:hover::before, .icard.on::before { background: #0ea5e9; }
+.icard.on { border-color: #7dd3fc; background: #f0f9ff; box-shadow: 0 3px 16px rgba(14,165,233,0.14); }
+.ic-row { display:flex; align-items:flex-start; gap:7px; margin-bottom:5px; }
+.rbadge { font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 7px; flex-shrink: 0; margin-top: 1px; text-transform: uppercase; letter-spacing: 0.05em; }
+.rbadge.H { background: linear-gradient(135deg,#fee2e2,#fecdd3); color: #be123c; }
+.rbadge.M { background: linear-gradient(135deg,#fef3c7,#fde68a); color: #92400e; }
+.rbadge.L { background: linear-gradient(135deg,#d1fae5,#bbf7d0); color: #065f46; }
+.ic-title { font-size: 12px; color: #1e293b; line-height: 1.45; font-weight: 500; }
+.ic-meta { display:flex; gap:5px; }
+.ic-file { font-size: 10px; color: #94a3b8; font-family: 'SF Mono', monospace; }
+.ic-tag { font-size: 9px; background: #f1f5f9; color: #64748b; padding: 1px 6px; border-radius: 5px; }
+.main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.tabbar { background: #fff; border-bottom: 1px solid #dde8f5; display:flex; padding: 0 20px; gap: 2px; }
+.tbtn { font-size: 13px; padding: 13px 18px 11px; border:none; background:none; color: #94a3b8; cursor:pointer; font-weight:500; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s; }
+.tbtn:hover { color: #0284c7; }
+.tbtn.on { color: #0ea5e9; border-bottom-color: #0ea5e9; font-weight: 700; }
+.tpane { flex:1; overflow:hidden; display:none; flex-direction:column; }
+.tpane.vis { display:flex; }
+.tscroll { flex:1; overflow-y:auto; padding: 20px; }
+.dcard { background: #fff; border: 1px solid #dde8f5; border-radius: 14px; padding: 22px; margin-bottom: 14px; box-shadow: 0 2px 16px rgba(14,165,233,0.06); }
+.dcard h3 { font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 16px; display:flex; align-items:center; gap:8px; }
+.frow { display:flex; gap:12px; margin-bottom:10px; align-items:flex-start; }
+.flabel { font-size: 11px; color: #94a3b8; width: 48px; flex-shrink:0; padding-top:2px; font-weight:600; }
+.fval { font-size: 13px; color: #334155; line-height: 1.6; }
+.fval code { background: linear-gradient(135deg,#f0f9ff,#e0f2fe); color: #0284c7; padding: 1px 8px; border-radius: 5px; font-size: 12px; font-family: 'SF Mono', monospace; border: 1px solid #bae6fd; }
+.suggest { background: linear-gradient(135deg,#f0f9ff,#e0f2fe); border: 1px solid #bae6fd; border-left: 3px solid #0ea5e9; border-radius: 10px; padding: 14px 16px; margin-top: 14px; font-size: 13px; color: #0369a1; line-height: 1.7; }
+.actbar { display:flex; gap:9px; margin-top: 18px; flex-wrap:wrap; }
+.btn { font-size: 12px; padding: 9px 18px; border-radius: 9px; cursor:pointer; font-weight:700; border: none; display:flex; align-items:center; gap:6px; transition: all 0.2s; }
+.btn-primary { background: linear-gradient(135deg,#0ea5e9,#0284c7); color: #fff; box-shadow: 0 3px 12px rgba(14,165,233,0.35); }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(14,165,233,0.45); }
+.btn-outline { background:#fff; color:#0284c7; border: 1.5px solid #7dd3fc; }
+.btn-outline:hover { background:#f0f9ff; }
+.btn-ghost { background:#f1f5f9; color:#64748b; }
+.btn-ghost:hover { background:#e2e8f0; }
+.xpanel { background:#0b1426; border-radius:12px; padding:16px 20px; margin-top:14px; border:1px solid #1e3a5f; box-shadow: 0 4px 24px rgba(0,0,0,0.2); }
+.xtopbar { display:flex; align-items:center; gap:7px; margin-bottom:12px; }
+.xdot { width:11px; height:11px; border-radius:50%; }
+.xtitle { font-size:11px; color:#475569; margin-left:6px; letter-spacing:0.05em; }
+.xout { font-family:'SF Mono','Menlo',monospace; font-size:12px; color:#7dd3fc; line-height:1.75; white-space:pre-wrap; min-height:60px; }
+.x-dim { color:#2d4a6a; }
+.x-grn { color:#34d399; }
+.x-red { color:#f87171; }
+.dag-wrap { flex: 1; position: relative; overflow: hidden; background: radial-gradient(ellipse at 30% 40%, #e8f4ff 0%, #f0f6ff 40%, #eaf2fc 100%); }
+.dag-wrap::before { content: ''; position: absolute; inset: 0; background-image: linear-gradient(rgba(14,165,233,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(14,165,233,0.06) 1px, transparent 1px); background-size: 40px 40px; pointer-events: none; }
+.dag-controls { position:absolute; top:14px; right:14px; z-index:10; display:flex; gap:6px; }
+.dbtn { background: rgba(255,255,255,0.9); border: 1px solid #dde8f5; border-radius: 8px; width:32px; height:32px; font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow: 0 2px 8px rgba(14,165,233,0.10); transition: all 0.15s; backdrop-filter: blur(4px); }
+.dbtn:hover { background: #f0f9ff; border-color: #7dd3fc; transform: scale(1.05); }
+.dag-legend { position:absolute; bottom:14px; left:14px; z-index:10; background: rgba(255,255,255,0.92); border: 1px solid #dde8f5; border-radius: 10px; padding: 10px 14px; display:flex; gap:14px; align-items:center; font-size:11px; color:#64748b; box-shadow: 0 2px 12px rgba(14,165,233,0.10); backdrop-filter: blur(6px); }
+.li { display:flex; align-items:center; gap:5px; }
+.ld { width:10px; height:10px; border-radius:50%; }
+.node { cursor: pointer; }
+.node.dimmed { opacity: 0.15; transition: opacity 0.3s; }
+.link-path { fill: none; }
+.link-path.dimmed { opacity: 0.05; transition: opacity 0.3s; }
+.tip { position:absolute; z-index:20; pointer-events:none; background: rgba(255,255,255,0.97); border: 1px solid #bae6fd; border-radius: 12px; padding: 13px 15px; box-shadow: 0 8px 32px rgba(14,165,233,0.18); max-width: 280px; font-size: 12px; color: #334155; opacity:0; transition: opacity 0.15s; backdrop-filter: blur(8px); }
+.tip.vis { opacity: 1; }
+.tip h4 { font-size:13px; font-weight:700; color:#0f172a; margin-bottom:5px; font-family:'SF Mono',monospace; word-break:break-all; }
+.tip .trisk { display:inline-block; font-size:10px; font-weight:700; padding:1px 7px; border-radius:5px; margin-bottom:5px; }
+.tip .trisk.high   { background:#fee2e2; color:#be123c; }
+.tip .trisk.medium { background:#fef3c7; color:#92400e; }
+.tip .trisk.low    { background:#d1fae5; color:#065f46; }
+.tip .trisk.source { background:#e0f2fe; color:#0369a1; }
+.tip .tline { display:inline-block; background:#e0f2fe; color:#0284c7; font-size:10px; font-weight:700; padding:1px 7px; border-radius:5px; margin-left:6px; }
+.tip .treason { color:#64748b; font-style:italic; line-height:1.5; margin-top:6px; font-size:11px; }
+</style>
+</head>
+<body>
+<!--LUNA_DATA_PLACEHOLDER-->
+
+<div class="topbar">
+  <div class="logo">🌙 Luna <span class="logo-sub">代码审查报告</span></div>
+  <div class="branch-pill" id="branch-pill">⎇ —</div>
+  <div class="spacer"></div>
+  <div class="top-stats" id="top-stats"></div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="sb-head">
+      <div class="sb-title">发现问题</div>
+      <div class="filter-row" id="filter-row"></div>
+    </div>
+    <div class="issue-list" id="issue-list"></div>
+  </div>
+  <div class="main">
+    <div class="tabbar">
+      <button class="tbtn on" onclick="switchTab('detail',this)">问题详情</button>
+      <button class="tbtn" onclick="switchTab('dag',this)">💥 影响链路</button>
+    </div>
+    <div class="tpane vis" id="tp-detail">
+      <div class="tscroll" id="detail-scroll"></div>
+    </div>
+    <div class="tpane" id="tp-dag">
+      <div class="dag-wrap">
+        <div class="dag-controls">
+          <button class="dbtn" onclick="resetZ()">⊙</button>
+          <button class="dbtn" onclick="zIn()">＋</button>
+          <button class="dbtn" onclick="zOut()">－</button>
+        </div>
+        <div class="dag-legend">
+          <div class="li"><div class="ld" style="background:radial-gradient(circle,#a5f3fc,#0ea5e9);box-shadow:0 0 6px #0ea5e9"></div>改动来源</div>
+          <div class="li"><div class="ld" style="background:radial-gradient(circle,#fda4af,#e11d48);box-shadow:0 0 6px #e11d48"></div>高危</div>
+          <div class="li"><div class="ld" style="background:radial-gradient(circle,#fcd34d,#f59e0b);box-shadow:0 0 6px #f59e0b"></div>中危</div>
+          <div class="li"><div class="ld" style="background:radial-gradient(circle,#6ee7b7,#10b981);box-shadow:0 0 6px #10b981"></div>低危</div>
+        </div>
+        <svg id="dsvg" width="100%" height="100%"></svg>
+        <div class="tip" id="tip"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const D = window.__LUNA_DATA__;
+const PORT = D.meta.server_port;
+const BASE = `http://localhost:${PORT}`;
+
+document.getElementById('branch-pill').textContent = '⎇ ' + D.meta.branch;
+const counts = {high: 0, medium: 0, low: 0};
+D.issues.forEach(i => counts[i.risk] = (counts[i.risk]||0) + 1);
+const statsEl = document.getElementById('top-stats');
+if (counts.high)   statsEl.innerHTML += `<div class="stat-pill danger">● ${counts.high} 高危</div>`;
+if (counts.medium) statsEl.innerHTML += `<div class="stat-pill warn">● ${counts.medium} 中危</div>`;
+if (counts.low)    statsEl.innerHTML += `<div class="stat-pill ok">● ${counts.low} 低危</div>`;
+
+let _filter = 'all';
+function buildFilters() {
+  const row = document.getElementById('filter-row');
+  const filters = [['all','全部 '+D.issues.length]];
+  if (counts.high)   filters.push(['high',  '🔴 高危 '+counts.high]);
+  if (counts.medium) filters.push(['medium','⚠️ 中危 '+counts.medium]);
+  if (counts.low)    filters.push(['low',   '💡 低危 '+counts.low]);
+  row.innerHTML = filters.map(([k,v]) =>
+    `<span class="fpill${k===_filter?' on':''}" onclick="setFilter('${k}')">${v}</span>`
+  ).join('');
+}
+function setFilter(f) { _filter = f; buildFilters(); buildIssueList(); }
+buildFilters();
+
+let _activeId = D.issues[0]?.id ?? null;
+function buildIssueList() {
+  const list = document.getElementById('issue-list');
+  const visible = _filter === 'all' ? D.issues : D.issues.filter(i => i.risk === _filter);
+  const BADGE = {high:'H',medium:'M',low:'L'};
+  list.innerHTML = visible.map(issue => `
+    <div class="icard${issue.id===_activeId?' on':''}" onclick="selectIssue(${issue.id})">
+      <div class="ic-row">
+        <span class="rbadge ${BADGE[issue.risk]}">${{high:'高危',medium:'中危',low:'低危'}[issue.risk]}</span>
+        <span class="ic-title">${esc(issue.title)}</span>
+      </div>
+      <div class="ic-meta">
+        <span class="ic-file">${esc(issue.file)} · L${issue.line}</span>
+        ${issue.issue_type ? `<span class="ic-tag">${esc(issue.issue_type)}</span>` : ''}
+      </div>
+    </div>`).join('');
+}
+buildIssueList();
+
+const RISK_DOT = {high:'<span style="color:#e11d48">●</span>', medium:'<span style="color:#f59e0b">●</span>', low:'<span style="color:#10b981">●</span>'};
+const MODE_LABEL = {auto:'🤖 可自动修复', assist:'🔧 辅助修复', manual:'👤 需人工确认'};
+
+function selectIssue(id) {
+  _activeId = id;
+  buildIssueList();
+  renderDetail(id);
+}
+if (_activeId) renderDetail(_activeId);
+
+function renderDetail(id) {
+  const issue = D.issues.find(i => i.id === id);
+  if (!issue) return;
+  const el = document.getElementById('detail-scroll');
+  el.innerHTML = `
+    <div class="dcard">
+      <h3>${RISK_DOT[issue.risk]} ${esc(issue.title)}</h3>
+      <div class="frow"><span class="flabel">文件</span><span class="fval"><code>${esc(issue.file)}</code> · L${issue.line}</span></div>
+      <div class="frow"><span class="flabel">类型</span><span class="fval" style="font-weight:600">${esc(issue.issue_type||'—')} <span style="color:#94a3b8;font-weight:400;font-size:12px">· ${MODE_LABEL[issue.mode]||''}</span></span></div>
+      <div class="frow"><span class="flabel">原因</span><span class="fval">${esc(issue.reason)}</span></div>
+      ${issue.suggestion ? `<div class="suggest">💡 <strong>建议修复：</strong>${esc(issue.suggestion)}</div>` : ''}
+      <div class="actbar">
+        ${issue.mode !== 'manual' ? `<button class="btn btn-primary" onclick="runCmd('luna fix ${issue.id} --yes')">🤖 自动修复</button>` : ''}
+        <button class="btn btn-outline" onclick="runCmd('luna fix ${issue.id} --preview')">预览修复</button>
+        <button class="btn btn-ghost" onclick="copyCmd('luna fix ${issue.id}')">📋 复制命令</button>
+      </div>
+    </div>
+    <div id="xwrap" style="display:none">
+      <div class="xpanel">
+        <div class="xtopbar">
+          <div class="xdot" style="background:#ff5f57"></div>
+          <div class="xdot" style="background:#febc2e"></div>
+          <div class="xdot" style="background:#28c840"></div>
+          <span class="xtitle" id="xcmd"></span>
+        </div>
+        <div class="xout" id="xout"></div>
+      </div>
+    </div>`;
+}
+
+function runCmd(cmd) {
+  document.getElementById('xwrap').style.display = 'block';
+  document.getElementById('xcmd').textContent = cmd;
+  const out = document.getElementById('xout');
+  out.innerHTML = `<span class="x-dim">$ ${cmd}</span>\n`;
+
+  fetch(`${BASE}/run`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({cmd})
+  });
+
+  const es = new EventSource(`${BASE}/stream`);
+  es.onmessage = e => {
+    const line = JSON.parse(e.data);
+    out.textContent += line + '\n';
+  };
+  es.addEventListener('done', () => es.close());
+  es.onerror = () => es.close();
+}
+
+function copyCmd(cmd) {
+  navigator.clipboard.writeText(cmd).catch(() => {});
+}
+
+function switchTab(id, btn) {
+  document.querySelectorAll('.tbtn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.querySelectorAll('.tpane').forEach(p => p.classList.remove('vis'));
+  document.getElementById('tp-'+id).classList.add('vis');
+  if (id === 'dag') initDAG();
+}
+
+const C = {
+  source: {fill:['#e0f2fe','#bae6fd'], stroke:'#0ea5e9', text:'#0369a1'},
+  high:   {fill:['#fee2e2','#fecdd3'], stroke:'#ef4444', text:'#be123c'},
+  medium: {fill:['#fef9c3','#fde68a'], stroke:'#f59e0b', text:'#92400e'},
+  low:    {fill:['#d1fae5','#bbf7d0'], stroke:'#10b981', text:'#065f46'},
+};
+let svg, g, zoomBeh, dagInited = false;
+
+setInterval(() => {
+  fetch(`${BASE}/heartbeat`, {method:'POST', body:'{}'}).catch(()=>{});
+}, 5000);
+
+function initDAG() {
+  if (dagInited) return;
+  dagInited = true;
+  const el = document.getElementById('dsvg');
+  const W = el.parentElement.clientWidth;
+  const H = el.parentElement.clientHeight;
+  svg = d3.select('#dsvg');
+  zoomBeh = d3.zoom().scaleExtent([0.2,3]).on('zoom', e => g.attr('transform', e.transform));
+  svg.call(zoomBeh);
+  g = svg.append('g');
+  const defs = svg.append('defs');
+  const clusters = D.blast.clusters;
+
+  Object.entries(C).forEach(([risk, c]) => {
+    const gr = defs.append('radialGradient').attr('id','grad-'+risk).attr('cx','35%').attr('cy','35%');
+    gr.append('stop').attr('offset','0%').attr('stop-color', c.fill[0]);
+    gr.append('stop').attr('offset','100%').attr('stop-color', c.fill[1]);
+    const flt = defs.append('filter').attr('id','glow-'+risk).attr('x','-50%').attr('y','-50%').attr('width','200%').attr('height','200%');
+    flt.append('feGaussianBlur').attr('stdDeviation','4').attr('result','blur');
+    const m = flt.append('feMerge');
+    m.append('feMergeNode').attr('in','blur');
+    m.append('feMergeNode').attr('in','SourceGraphic');
+    defs.append('marker').attr('id','arr-'+risk)
+      .attr('viewBox','0 -5 10 10').attr('refX',30).attr('refY',0)
+      .attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto')
+      .append('path').attr('d','M0,-4L9,0L0,4').attr('fill',c.stroke).attr('opacity',0.75);
+  });
+
+  const N = clusters.length;
+  clusters.forEach((cluster, ci) => {
+    const angle = (2 * Math.PI * ci / N) - Math.PI / 2;
+    const srcR = Math.min(W, H) * 0.22;
+    cluster._sx = W/2 + (N > 1 ? srcR * Math.cos(angle) : 0);
+    cluster._sy = H/2 + (N > 1 ? srcR * Math.sin(angle) : 0);
+    const M = cluster.nodes.length;
+    cluster.nodes.forEach((nd, ni) => {
+      const spread = Math.min(W, H) * 0.28;
+      const a = (2 * Math.PI * ni / Math.max(M,1)) + angle;
+      nd._x = cluster._sx + spread * Math.cos(a);
+      nd._y = cluster._sy + spread * Math.sin(a);
+    });
+    const allX = [cluster._sx, ...cluster.nodes.map(n=>n._x)];
+    const allY = [cluster._sy, ...cluster.nodes.map(n=>n._y)];
+    const cx = allX.reduce((a,b)=>a+b,0)/allX.length;
+    const cy = allY.reduce((a,b)=>a+b,0)/allY.length;
+    const r = Math.max(...allX.map((x,i)=>Math.hypot(x-cx, allY[i]-cy))) + 55;
+    const hue = ci === 0 ? 'rgba(14,165,233,0.07)' : 'rgba(99,102,241,0.07)';
+    const bord = ci === 0 ? 'rgba(14,165,233,0.12)' : 'rgba(99,102,241,0.12)';
+    g.append('ellipse').attr('cx',cx).attr('cy',cy).attr('rx',r).attr('ry',r*0.78)
+      .attr('fill',hue).attr('stroke',bord).attr('stroke-width',1.5).attr('stroke-dasharray','6,4');
+  });
+
+  clusters.forEach((cluster, ci) => {
+    cluster.nodes.forEach(nd => {
+      const sx = cluster._sx, sy = cluster._sy, tx = nd._x, ty = nd._y;
+      const dx = tx-sx, dy = ty-sy;
+      const cx1 = sx+dx*0.35+dy*0.15, cy1 = sy+dy*0.35-dx*0.15;
+      const id = `lg-${ci}-${nd.file.replace(/\W/g,'_')}`;
+      const lg = defs.append('linearGradient').attr('id',id)
+        .attr('x1',sx).attr('y1',sy).attr('x2',tx).attr('y2',ty).attr('gradientUnits','userSpaceOnUse');
+      lg.append('stop').attr('offset','0%').attr('stop-color',C.source.stroke).attr('stop-opacity',0.7);
+      lg.append('stop').attr('offset','100%').attr('stop-color',C[nd.risk].stroke).attr('stop-opacity',0.6);
+      g.append('path').attr('class','link-path')
+        .attr('d',`M${sx},${sy} C${cx1},${cy1} ${tx-dx*0.2},${ty-dy*0.2} ${tx},${ty}`)
+        .attr('stroke',`url(#${id})`).attr('stroke-width',2)
+        .attr('marker-end',`url(#arr-${nd.risk})`);
+    });
+  });
+
+  function drawNode(ng, risk, isSource, label, sublabel, line) {
+    const c = C[risk]; const r = isSource ? 40 : 30;
+    if (isSource) {
+      ng.append('circle').attr('r',r+14).attr('fill','none').attr('stroke',c.stroke)
+        .attr('stroke-width',1).attr('stroke-opacity',0.25).attr('stroke-dasharray','4,3');
+      ng.append('circle').attr('r',r+26).attr('fill','none').attr('stroke',c.stroke)
+        .attr('stroke-width',0.5).attr('stroke-opacity',0.12);
+    }
+    ng.append('circle').attr('r',r).attr('fill',`url(#grad-${risk})`)
+      .attr('stroke',c.stroke).attr('stroke-width',isSource?2.5:2).attr('filter',`url(#glow-${risk})`);
+    ng.append('circle').attr('r',r*0.55).attr('cx',-r*0.2).attr('cy',-r*0.25).attr('fill','rgba(255,255,255,0.28)');
+    ng.append('text').attr('text-anchor','middle').attr('y',isSource?-9:-6)
+      .attr('font-size',isSource?'9px':'8.5px').attr('fill',c.text).attr('opacity',0.75).text(sublabel);
+    ng.append('text').attr('text-anchor','middle').attr('y',isSource?7:5)
+      .attr('font-size',isSource?'11px':'10px').attr('font-weight','700').attr('fill',c.text).text(label);
+    if (line) ng.append('text').attr('text-anchor','middle').attr('y',isSource?22:18)
+      .attr('font-size','9px').attr('fill',c.stroke).attr('font-weight','700').text('L'+line);
+  }
+
+  clusters.forEach((cluster, ci) => {
+    const srcFile = cluster.source.file;
+    const parts = srcFile.split('/'); const fname = parts.pop(); const fdir = parts.join('/')+'/';
+    const ng = g.append('g').attr('class','node').attr('transform',`translate(${cluster._sx},${cluster._sy})`);
+    drawNode(ng, 'source', true, fname, fdir, null);
+    ng.on('mouseover', e => showTip(e, {file: srcFile, risk:'source', line:null, reason: cluster.source.symbol}))
+      .on('mousemove', moveTip).on('mouseout', hideTip)
+      .on('click', () => highlightCluster(ci));
+
+    cluster.nodes.forEach(nd => {
+      const p2 = nd.file.split('/'); const fn2 = p2.pop(); const fd2 = p2.join('/')+'/';
+      const ndg = g.append('g').attr('class','node').attr('transform',`translate(${nd._x},${nd._y})`);
+      drawNode(ndg, nd.risk, false, fn2, fd2, nd.line);
+      ndg.on('mouseover', e => showTip(e, nd))
+         .on('mousemove', moveTip).on('mouseout', hideTip)
+         .on('click', () => highlightCluster(ci));
+    });
+  });
+}
+
+const RISK_ZH = {high:'高危', medium:'中危', low:'低危', source:'改动来源'};
+
+function showTip(evt, d) {
+  const tip = document.getElementById('tip');
+  const parts = d.file.split('/'); const fname = parts.pop(); const fdir = parts.join('/')+'/';
+  tip.innerHTML =
+    `<h4>${esc(fdir)}${esc(fname)}</h4>` +
+    `<span class="trisk ${d.risk}">${RISK_ZH[d.risk]||d.risk}</span>` +
+    (d.line ? `<span class="tline">L${d.line}</span>` : '') +
+    (d.reason ? `<div class="treason">${esc(d.reason)}</div>` : '');
+  tip.classList.add('vis');
+  moveTip(evt);
+}
+function moveTip(evt) {
+  const tip = document.getElementById('tip');
+  const wrap = tip.parentElement.getBoundingClientRect();
+  tip.style.left = Math.min(evt.clientX - wrap.left + 16, wrap.width - 295) + 'px';
+  tip.style.top  = (evt.clientY - wrap.top + 16) + 'px';
+}
+function hideTip() { document.getElementById('tip').classList.remove('vis'); }
+
+function highlightCluster(ci) {
+  const nodes = g.selectAll('.node').nodes();
+  const links = g.selectAll('.link-path').nodes();
+  const clusters = window.__LUNA_DATA__.blast.clusters;
+  const clusterNodeCount = clusters.map(c => 1 + c.nodes.length);
+  let start = 0;
+  const ranges = clusterNodeCount.map(n => { const r = [start, start+n]; start+=n; return r; });
+  nodes.forEach((n, i) => {
+    const inCluster = ranges[ci] && i >= ranges[ci][0] && i < ranges[ci][1];
+    d3.select(n).classed('dimmed', !inCluster);
+  });
+  let linkStart = 0;
+  clusters.forEach((c, i) => {
+    const nLinks = c.nodes.length;
+    for (let j = linkStart; j < linkStart + nLinks; j++) {
+      if (links[j]) d3.select(links[j]).classed('dimmed', i !== ci);
+    }
+    linkStart += nLinks;
+  });
+}
+
+function resetZ() {
+  svg.transition().duration(400).call(zoomBeh.transform, d3.zoomIdentity);
+  g.selectAll('.node').classed('dimmed', false);
+  g.selectAll('.link-path').classed('dimmed', false);
+}
+function zIn()  { svg.transition().duration(220).call(zoomBeh.scaleBy, 1.45); }
+function zOut() { svg.transition().duration(220).call(zoomBeh.scaleBy, 0.7); }
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

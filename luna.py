@@ -585,6 +585,15 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
     path = save(report, out_dir, runtime_ctx=runtime)
     runtime.report_path = str(path)
     render_review(report, runtime, fmt=fmt, quiet=quiet)
+    # web 报告暂时禁用，代码保留待后续迭代
+    # try:
+    #     from web_reporter import generate_and_open as _web_open
+    #     _branch = getattr(runtime, "branch", "") or getattr(runtime, "commit_hash", "")[:8]
+    #     _web_open(report, out_dir, branch=_branch, quiet=quiet)
+    # except Exception as _web_err:
+    #     import traceback, sys
+    #     print(f"\n[luna web] 错误: {_web_err}", file=sys.stderr)
+    #     traceback.print_exc(file=sys.stderr)
 
 
 @cli.command("gitlab")
@@ -923,9 +932,10 @@ def detail_cmd(detail_id, reports_dir, config_path):
 @cli.command("fix")
 @click.argument("fix_id", type=int)
 @click.option("--preview", is_flag=True, help="只展示 diff，不写入文件")
+@click.option("--yes", "-y", "auto_yes", is_flag=True, help="跳过确认直接应用（web 界面使用）")
 @click.option("--reports-dir", default=None, help="报告目录（默认读配置）")
 @click.option("--config", "config_path", default=None)
-def fix_cmd(fix_id, preview, reports_dir, config_path):
+def fix_cmd(fix_id, preview, auto_yes, reports_dir, config_path):
     """应用修复队列中的第 N 条建议。"""
     from luna_fix import load_latest_report, generate_fix, apply_patch
 
@@ -978,7 +988,7 @@ def fix_cmd(fix_id, preview, reports_dir, config_path):
     if preview:
         return
 
-    if ask("应用此修改？", default=False):
+    if auto_yes or ask("应用此修改？", default=False):
         if apply_patch(patch, "."):
             click.echo(f"✅ 已写入 {candidate.file}")
         else:

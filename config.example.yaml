@@ -1,0 +1,49 @@
+# Luna 配置文件示例
+# 复制此文件为 ~/.luna/config.yaml 并填入你的配置
+
+api:
+  # AI 提供商：anthropic | openai
+  # 若设置了 base_url，自动走 OpenAI 兼容中转站模式
+  provider: anthropic
+  model: claude-sonnet-4-6     # 或 gpt-4o、claude-opus-4-8 等
+  key: sk-xxx                  # 你的 API Key
+  base_url: ""                 # 中转站地址（可选），如 https://your-proxy.com/v1
+
+gitlab:
+  url: https://gitlab.example.com
+  token: glpat-xxx             # GitLab Personal Access Token
+  project_id: "123"            # 项目 ID（数字字符串）
+  min_risk: medium             # 低于此风险等级的发现不发 MR 评论
+
+review:
+  project_type: auto           # auto | frontend | backend | fullstack
+  language: zh                 # 输出语言
+  max_diff_chars: 120000       # 超出则截断，避免 token 超限
+
+backend:
+  enabled: true
+  languages: [csharp, java, python, nodejs, go, php, cpp]
+  max_depth: 4                 # BFS 最大深度
+
+privacy:
+  ignore:                      # 忽略的目录
+    - node_modules
+    - .git
+    - dist
+    - build
+  redact_patterns:             # 敏感信息脱敏正则
+    - Bearer\s+[A-Za-z0-9._-]+
+    - AKIA[0-9A-Z]{16}
+
+reports:
+  output_dir: .luna-reports    # 报告输出目录
+
+# 团队规则（可选）
+# 将团队代码规范写成 Markdown 文件，Luna 会把内容注入 LLM system prompt
+skills: []
+# 示例：
+# skills:
+#   - name: api-conventions
+#     path: ./team-rules/api.md
+#   - name: security-checklist
+#     path: ./team-rules/security.md

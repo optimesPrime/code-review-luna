@@ -1,15 +1,39 @@
+# 审查报告输出
 .cr-reports/
+.luna-reports/
+
+# Python
 __pycache__/
 *.egg-info/
-.env
-.DS_Store
 *.pyc
+*.egg
 build/
 dist/
-.pytest_cache/
+
+# 配置（含 API Key，禁止提交）
+config.yaml
+
+# SQLite 图缓存
+*.db
+*.db-shm
+*.db-wal
+
+# 虚拟环境
 .venv/
 venv/
+
+# IDE & 系统
+.env
+.DS_Store
+.idea/
+.vscode/
+
+# 测试
+.pytest_cache/
 .coverage
 htmlcov/
-*.egg
+
+# luna 缓存
 .luna/cache/
+.luna/
+

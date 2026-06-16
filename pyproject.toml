@@ -37,5 +37,5 @@ pythonpath = ["."]
 addopts = "--import-mode=importlib"
 
 [tool.setuptools]
-py-modules = ["luna", "config", "diff_reader", "skill_loader", "confirmer", "api_client", "reporter", "test_importer", "runtime_context", "terminal_renderer", "luna_fix", "history_renderer", "hook_installer"]
+py-modules = ["luna", "config", "diff_reader", "skill_loader", "confirmer", "api_client", "reporter", "test_importer", "runtime_context", "terminal_renderer", "luna_fix", "history_renderer", "hook_installer", "web_reporter", "web_server"]
 packages = ["phases", "phases.adapters"]
