@@ -150,10 +150,10 @@ api:
 ### 安装
 
 ```bash
-git clone https://github.com/yourname/luna.git
-cd luna
-pip install -e .
+curl -sSL https://raw.githubusercontent.com/optimesPrime/code-review-luna/main/install.sh | bash
 ```
+
+需要 Python 3.11+。脚本会自动安装 pipx、拉取 Luna 并生成配置文件 `~/.luna/config.yaml`。
 
 ### 配置
 
@@ -353,7 +353,9 @@ git diff
 ## 开发与贡献
 
 ```bash
-# 安装开发依赖
+# 从源码安装（开发模式）
+git clone https://github.com/optimesPrime/code-review-luna.git
+cd code-review-luna
 pip install -e ".[dev]"
 
 # 运行测试
