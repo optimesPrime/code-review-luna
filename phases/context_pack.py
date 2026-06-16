@@ -18,8 +18,18 @@ class ContextPack:
 
     def to_dict(self) -> dict:
         _risk_order = {"high": 0, "medium": 1, "low": 2}
+
+        # 按终点文件去重：同一终点保留风险最高的路径，避免冗余路径撑大上下文
+        # 覆盖范围不变（每个受影响文件仍有代表路径），只消除重复终点
+        endpoint_best: dict = {}
+        for p in self.impact_paths:
+            endpoint = p.path[-1] if p.path else ""
+            existing = endpoint_best.get(endpoint)
+            if existing is None or _risk_order.get(p.risk, 3) < _risk_order.get(existing.risk, 3):
+                endpoint_best[endpoint] = p
+
         top_paths = sorted(
-            self.impact_paths, key=lambda p: _risk_order.get(p.risk, 3)
+            endpoint_best.values(), key=lambda p: _risk_order.get(p.risk, 3)
         )[:25]
         return {
             "changed_symbols": [

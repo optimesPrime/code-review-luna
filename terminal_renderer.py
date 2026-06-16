@@ -316,6 +316,7 @@ class ImpactBlock:
     symbol_name: str
     risk: str
     chains: list  # list[list[ChainNode]]
+    source_file: str = ""
 
 
 def _classify_fix_candidate(item) -> tuple[str, str]:
@@ -385,11 +386,10 @@ def _group_impact_paths(report: "ReviewReport") -> list:
                         risk=best.risk,
                     ))
                 else:
-                    is_leaf = (i == len(path_nodes) - 1)
                     chain.append(ChainNode(
                         file=node_str,
                         line=0,
-                        reason=path_reason if is_leaf else "",
+                        reason=path_reason,
                         risk=p.get("risk", "low"),
                     ))
             if chain:
@@ -400,6 +400,7 @@ def _group_impact_paths(report: "ReviewReport") -> list:
                 symbol_name=symbol_name,
                 risk=block_risk,
                 chains=chains,
+                source_file=src,
             ))
 
     return blocks
@@ -413,7 +414,10 @@ def build_blast_chain(report: "ReviewReport", max_chains: int = 3, max_nodes: in
             path = path_dict.get("path", [])
             if not isinstance(path, list) or not path:
                 continue
-            nodes = [str(p).split("/")[-1] for p in path[:max_nodes]]
+            def _short_path(p):
+                segs = str(p).split("/")
+                return "/".join(segs[-2:]) if len(segs) >= 2 else segs[-1]
+            nodes = [_short_path(p) for p in path[:max_nodes]]
             suffix = " → ..." if len(path) > max_nodes else ""
             chains.append(" → ".join(nodes) + suffix)
         if chains:
@@ -449,8 +453,76 @@ def _cmd_for_checkpoint(cp: "CheckpointResult", fix_candidates: list) -> str | N
     return None
 
 
+def _merge_chains(chains: list) -> list:
+    """Merge a list of ChainNode chains into a prefix-deduplicated tree structure.
+
+    Returns list of _MergedNode (each has .node: ChainNode and .children: list).
+    Chains sharing the same file at a given depth are merged into one branch,
+    avoiding duplicate sibling nodes for the same file.
+    """
+    class _MergedNode:
+        __slots__ = ("node", "_children_map")
+        def __init__(self, chain_node):
+            self.node = chain_node
+            self._children_map: dict = {}
+
+        @property
+        def children(self):
+            return list(self._children_map.values())
+
+    roots: dict = {}
+    for chain in chains:
+        level = roots
+        for cn in chain:
+            key = cn.file
+            if key not in level:
+                level[key] = _MergedNode(cn)
+            level = level[key]._children_map
+
+    def _collect(d):
+        return list(d.values())
+
+    # Attach collect helper as a local closure
+    def _to_list(node_map):
+        result = []
+        for mn in node_map.values():
+            result.append((mn.node, _to_list(mn._children_map)))
+        return result
+
+    return _to_list(roots)
+
+
+def _render_merged_tree(rich_parent, merged_nodes: list, icons: dict, styles: dict) -> None:
+    """Recursively render merged chain nodes onto a Rich Tree."""
+    for node, children in merged_nodes:
+        parts  = node.file.rsplit("/", 1)
+        fdir   = parts[0] + "/" if len(parts) == 2 else ""
+        fname  = parts[-1]
+        style  = styles.get(node.risk, "dim")
+        icon   = icons.get(node.risk, "")
+
+        file_label = Text()
+        file_label.append(f"{icon}  ", style=style)
+        file_label.append(fname, style=f"bold {style}")
+        if node.line:
+            file_label.append(f"  L{node.line}", style="dim")
+        if node.reason:
+            file_label.append(f"\n   {node.reason[:100]}", style="dim italic")
+
+        if fdir:
+            dir_label = Text()
+            dir_label.append(f"📁  {fdir}", style="dim")
+            dir_branch = rich_parent.add(dir_label)
+            branch = dir_branch.add(file_label)
+        else:
+            branch = rich_parent.add(file_label)
+
+        if children:
+            _render_merged_tree(branch, children, icons, styles)
+
+
 def _render_blast_section(console: "Console", report: "ReviewReport") -> None:
-    """Render each changed symbol as an independent impact chain tree."""
+    """Render each changed symbol as an independent, deduplicated impact chain tree."""
     impact_paths = [
         p for p in report.impact_paths
         if isinstance(p.get("path"), list) and len(p["path"]) >= 2
@@ -473,22 +545,18 @@ def _render_blast_section(console: "Console", report: "ReviewReport") -> None:
         for block in blocks:
             b_icon  = _RISK_ICON.get(block.risk, "")
             b_style = _RISK_STYLE.get(block.risk, "dim")
-            tree    = Tree(f"{b_icon}  [{b_style}]{block.symbol_name}[/{b_style}]")
-
-            for chain in block.chains:
-                current = tree
-                for node in chain:
-                    n_icon  = _RISK_ICON.get(node.risk, "")
-                    n_style = _RISK_STYLE.get(node.risk, "dim")
-                    fname   = node.file.split("/")[-1]
-                    loc     = f":{node.line}" if node.line else ""
-                    reason  = f"   [dim]{node.reason[:70]}[/dim]" if node.reason else ""
-                    current = current.add(
-                        f"{n_icon}  [{n_style}]{fname}{loc}[/{n_style}]{reason}"
-                    )
-
+            src_parts = block.source_file.rsplit("/", 1) if block.source_file else []
+            src_dir   = (src_parts[0] + "/") if len(src_parts) == 2 else ""
+            src_label = Text()
+            src_label.append(f"{b_icon}  ", style=b_style)
+            if src_dir:
+                src_label.append(src_dir, style="dim")
+            src_label.append(block.symbol_name, style=f"bold {b_style}")
+            tree    = Tree(src_label)
+            merged  = _merge_chains(block.chains)
+            _render_merged_tree(tree, merged, _RISK_ICON, _RISK_STYLE)
             console.print(Padding(tree, (0, 2)))
-        console.print()
+            console.print()
 
     else:
         # Fallback: blast_radius_items → single tree under changed symbol
@@ -497,23 +565,34 @@ def _render_blast_section(console: "Console", report: "ReviewReport") -> None:
             (changed[0].get("name", "") or changed[0].get("file", "改动").split("/")[-1])
             if changed else "改动"
         )
-        top_risk  = min((i.risk for i in blast_items), key=lambda r: _rv.get(r, 2), default="low")
-        r_icon    = _RISK_ICON.get(top_risk, "")
-        r_style   = _RISK_STYLE.get(top_risk, "dim")
+        top_risk = min((i.risk for i in blast_items), key=lambda r: _rv.get(r, 2), default="low")
+        r_icon   = _RISK_ICON.get(top_risk, "")
+        r_style  = _RISK_STYLE.get(top_risk, "dim")
 
         console.print(Rule("💥  影响链路", style="dim"))
         console.print()
 
         tree = Tree(f"{r_icon}  [{r_style}]{root_label}[/{r_style}]")
         for item in sorted(blast_items[:8], key=lambda i: _rv.get(i.risk, 3)):
-            i_icon   = _RISK_ICON.get(item.risk, "")
-            i_style  = _RISK_STYLE.get(item.risk, "dim")
-            fname    = item.file.split("/")[-1]
-            reason   = (getattr(item, "reason", "") or "")[:70]
-            tree.add(
-                f"{i_icon}  [{i_style}]{fname}:{item.line}[/{i_style}]"
-                f"   [dim]{reason}[/dim]"
-            )
+            i_icon  = _RISK_ICON.get(item.risk, "")
+            i_style = _RISK_STYLE.get(item.risk, "dim")
+            parts   = item.file.rsplit("/", 1)
+            fdir    = parts[0] + "/" if len(parts) == 2 else ""
+            fname   = parts[-1]
+            reason  = (getattr(item, "reason", "") or "")[:100]
+            file_label = Text()
+            file_label.append(f"{i_icon}  ", style=i_style)
+            file_label.append(fname, style=f"bold {i_style}")
+            file_label.append(f"  L{item.line}", style="dim")
+            if reason:
+                file_label.append(f"\n   {reason}", style="dim italic")
+            if fdir:
+                dir_label = Text()
+                dir_label.append(f"📁  {fdir}", style="dim")
+                dir_branch = tree.add(dir_label)
+                dir_branch.add(file_label)
+            else:
+                tree.add(file_label)
 
         console.print(Padding(tree, (0, 2)))
         console.print()

@@ -831,6 +831,95 @@ def switch(config_path):
         click.echo(f"   中转站：{base_url}")
 
 
+@cli.command("detail")
+@click.argument("detail_id", type=int)
+@click.option("--reports-dir", default=None, help="报告目录（默认读配置）")
+@click.option("--config", "config_path", default=None)
+def detail_cmd(detail_id, reports_dir, config_path):
+    """查看审查发现 #N 的完整详情：文件位置、证据、修复建议。"""
+    from luna_fix import load_latest_report
+
+    try:
+        cfg = load_config(str(config_path or DEFAULT_CONFIG))
+    except Exception:
+        cfg = None
+    rdir = reports_dir or (cfg.reports.output_dir if cfg else ".luna-reports")
+
+    candidates = load_latest_report(rdir)
+    if candidates is None:
+        click.echo("未找到审查报告，请先运行 luna 生成报告。", err=True)
+        raise SystemExit(1)
+
+    candidate = next((c for c in candidates if c.id == detail_id), None)
+    if candidate is None:
+        click.echo(f"未找到发现项 #{detail_id}，运行 luna 查看列表。", err=True)
+        raise SystemExit(1)
+
+    _MODE_LABEL = {"auto": "🤖 可自动修复", "assist": "🔧 辅助修复", "manual": "👤 需人工处理"}
+    _RISK_STYLE = {"high": "bold red", "medium": "bold yellow", "low": "cyan"}
+
+    try:
+        from rich.console import Console as _Con
+        from rich.rule import Rule as _Rule
+        from rich.text import Text as _Text
+        from rich.padding import Padding as _Pad
+        _con = _Con()
+    except ImportError:
+        _con = None
+
+    if _con:
+        _con.print()
+        _con.print(_Rule(f"[bold]#{detail_id}  {candidate.title[:70]}[/bold]", style="cyan"))
+        _con.print()
+
+        parts = candidate.file.rsplit("/", 1)
+        fdir  = parts[0] + "/" if len(parts) == 2 else ""
+        fname = parts[-1]
+        loc = _Text()
+        loc.append("  文件  ", style="dim")
+        if fdir:
+            loc.append(fdir, style="dim")
+        loc.append(fname, style="bold")
+        loc.append(f"  L{candidate.line}", style="dim")
+        _con.print(loc)
+
+        mode_line = _Text()
+        mode_line.append("  类型  ", style="dim")
+        mode_line.append(_MODE_LABEL.get(candidate.mode, candidate.mode))
+        _con.print(mode_line)
+
+        if candidate.impact:
+            imp = _Text()
+            imp.append("  优先级  ", style="dim")
+            imp.append(candidate.impact, style=_RISK_STYLE.get(candidate.impact.lower(), ""))
+            _con.print(imp)
+
+        _con.print()
+
+        if candidate.evidence:
+            _con.print(_Text("  证据", style="bold"))
+            _con.print(_Pad(_Text(candidate.evidence, style="dim"), (0, 4)))
+            _con.print()
+
+        if candidate.suggestion:
+            _con.print(_Text("  建议", style="bold"))
+            _con.print(_Pad(_Text(candidate.suggestion), (0, 4)))
+            _con.print()
+
+        if candidate.mode != "manual":
+            _con.print(_Pad(_Text(f"$ {candidate.command_hint}", style="bold green"), (0, 2)))
+
+        _con.print()
+    else:
+        click.echo(f"\n#{detail_id}  {candidate.title}")
+        click.echo(f"文件：{candidate.file}  L{candidate.line}")
+        click.echo(f"类型：{_MODE_LABEL.get(candidate.mode, candidate.mode)}")
+        if candidate.evidence:
+            click.echo(f"\n证据：\n{candidate.evidence}")
+        if candidate.suggestion:
+            click.echo(f"\n建议：\n{candidate.suggestion}")
+
+
 @cli.command("fix")
 @click.argument("fix_id", type=int)
 @click.option("--preview", is_flag=True, help="只展示 diff，不写入文件")
