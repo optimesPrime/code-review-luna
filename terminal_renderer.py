@@ -450,7 +450,7 @@ def _cmd_for_checkpoint(cp: "CheckpointResult", fix_candidates: list) -> str | N
 
 
 def _render_blast_section(console: "Console", report: "ReviewReport") -> None:
-    """Render blast radius as risk-colored impact chains with reasons."""
+    """Render each changed symbol as an independent impact chain tree."""
     impact_paths = [
         p for p in report.impact_paths
         if isinstance(p.get("path"), list) and len(p["path"]) >= 2
@@ -460,45 +460,60 @@ def _render_blast_section(console: "Console", report: "ReviewReport") -> None:
     if not impact_paths and not blast_items:
         return
 
+    _rv         = {"high": 0, "medium": 1, "low": 2}
     _RISK_STYLE = {"high": "bold red", "medium": "bold yellow", "low": "cyan"}
     _RISK_ICON  = {"high": "🚨", "medium": "⚠️",  "low": "💡"}
-    _rv         = {"high": 0, "medium": 1, "low": 2}
-
-    console.print(Rule("💥  爆炸范围", style="dim"))
-    console.print()
 
     if impact_paths:
-        for p in sorted(impact_paths[:6], key=lambda x: _rv.get(x.get("risk", "low"), 2)):
-            risk   = p.get("risk", "low")
-            nodes  = [str(n).split("/")[-1] for n in p["path"]]
-            reason = str(p.get("reason", ""))[:90]
-            style  = _RISK_STYLE.get(risk, "dim")
-            icon   = _RISK_ICON.get(risk, "")
-
-            chain = " → ".join(nodes[:6])
-            if len(nodes) > 6:
-                chain += " → …"
-
-            header = Text()
-            header.append(f"  {icon}  ", style=style)
-            header.append(chain, style=style)
-            console.print(header)
-
-            if reason:
-                console.print(Padding(Text(reason, style="dim"), (0, 6)))
+        blocks = _group_impact_paths(report)
+        count  = sum(len(b.chains) for b in blocks)
+        console.print(Rule(f"💥  影响链路  {count} 条", style="dim"))
         console.print()
-    else:
-        # No graph paths — list blast items grouped as a tree under changed symbols
-        changed = list(report.changed_symbols)
-        root_label = changed[0].get("name", "") or changed[0].get("file", "改动") if changed else "改动"
-        tree = Tree(f"[bold cyan]{str(root_label).split('/')[-1]}[/bold cyan]  [dim](changed)[/dim]")
 
+        for block in blocks:
+            b_icon  = _RISK_ICON.get(block.risk, "")
+            b_style = _RISK_STYLE.get(block.risk, "dim")
+            tree    = Tree(f"{b_icon}  [{b_style}]{block.symbol_name}[/{b_style}]")
+
+            for chain in block.chains:
+                current = tree
+                for node in chain:
+                    n_icon  = _RISK_ICON.get(node.risk, "")
+                    n_style = _RISK_STYLE.get(node.risk, "dim")
+                    fname   = node.file.split("/")[-1]
+                    loc     = f":{node.line}" if node.line else ""
+                    reason  = f"   [dim]{node.reason[:70]}[/dim]" if node.reason else ""
+                    current = current.add(
+                        f"{n_icon}  [{n_style}]{fname}{loc}[/{n_style}]{reason}"
+                    )
+
+            console.print(Padding(tree, (0, 2)))
+        console.print()
+
+    else:
+        # Fallback: blast_radius_items → single tree under changed symbol
+        changed    = list(report.changed_symbols)
+        root_label = (
+            (changed[0].get("name", "") or changed[0].get("file", "改动").split("/")[-1])
+            if changed else "改动"
+        )
+        top_risk  = min((i.risk for i in blast_items), key=lambda r: _rv.get(r, 2), default="low")
+        r_icon    = _RISK_ICON.get(top_risk, "")
+        r_style   = _RISK_STYLE.get(top_risk, "dim")
+
+        console.print(Rule("💥  影响链路", style="dim"))
+        console.print()
+
+        tree = Tree(f"{r_icon}  [{r_style}]{root_label}[/{r_style}]")
         for item in sorted(blast_items[:8], key=lambda i: _rv.get(i.risk, 3)):
-            style  = _RISK_STYLE.get(item.risk, "dim")
-            icon   = _RISK_ICON.get(item.risk, "")
-            reason = (getattr(item, "reason", "") or "")[:70]
-            fname  = item.file.split("/")[-1]
-            tree.add(f"{icon}  [{style}]{fname}:{item.line}[/{style}]  [dim]{reason}[/dim]")
+            i_icon   = _RISK_ICON.get(item.risk, "")
+            i_style  = _RISK_STYLE.get(item.risk, "dim")
+            fname    = item.file.split("/")[-1]
+            reason   = (getattr(item, "reason", "") or "")[:70]
+            tree.add(
+                f"{i_icon}  [{i_style}]{fname}:{item.line}[/{i_style}]"
+                f"   [dim]{reason}[/dim]"
+            )
 
         console.print(Padding(tree, (0, 2)))
         console.print()

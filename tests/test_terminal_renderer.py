@@ -532,10 +532,10 @@ class TestNewRenderRich:
 
     def test_blast_chain_shown_when_impact_paths(self):
         r = _make_report(blast=[_blast("high", "r")])
-        r.impact_paths = [{"path": ["src/a.ts", "src/b.ts"], "risk": "high"}]
+        r.impact_paths = [{"path": ["src/a.ts", "src/b.ts"], "risk": "high", "reason": ""}]
         output = self._render(r)
-        assert "爆炸范围" in output
-        assert "→" in output
+        assert "影响链路" in output
+        assert "b.ts" in output
 
     def test_medium_in_suggest_fix_section(self):
         r = _make_report(blast=[_blast("medium", "缺少错误处理")])
@@ -624,3 +624,84 @@ class TestGroupImpactPaths:
         r.impact_paths = [{"path": ["src/a.ts"], "risk": "high", "reason": "r"}]
         blocks = _group_impact_paths(r)
         assert blocks == []
+
+
+class TestRenderBlastSection:
+    def _render(self, r):
+        from io import StringIO
+        from rich.console import Console
+        from terminal_renderer import _render_blast_section
+        buf = StringIO()
+        con = Console(file=buf, width=120, no_color=True)
+        _render_blast_section(con, r)
+        return buf.getvalue()
+
+    def test_empty_report_renders_nothing(self):
+        r = _make_report()
+        assert self._render(r) == ""
+
+    def test_renders_symbol_name_as_root(self):
+        r = _make_report()
+        r.changed_symbols = [{"name": "getUserById", "file": "src/a.ts"}]
+        r.impact_paths = [{"path": ["src/a.ts", "src/b.ts"], "risk": "high", "reason": "auth fails"}]
+        output = self._render(r)
+        assert "getUserById" in output
+
+    def test_each_source_is_independent_block(self):
+        r = _make_report()
+        r.impact_paths = [
+            {"path": ["src/a.ts", "src/b.ts"], "risk": "high",   "reason": "r1"},
+            {"path": ["src/c.ts", "src/d.ts"], "risk": "medium", "reason": "r2"},
+        ]
+        output = self._render(r)
+        assert "a.ts" in output
+        assert "c.ts" in output
+
+    def test_chain_node_shows_reason_from_blast_item(self):
+        from phases.blast_radius import BlastRadiusItem
+        item = BlastRadiusItem(
+            file="src/b.ts", line=42, symbol="x",
+            risk="high", confidence="medium", reason="auth check fails",
+        )
+        r = _make_report(blast=[item])
+        r.impact_paths = [{"path": ["src/a.ts", "src/b.ts"], "risk": "high", "reason": "fallback"}]
+        output = self._render(r)
+        assert "b.ts" in output
+        assert "auth check fails" in output
+
+    def test_chain_count_in_header(self):
+        r = _make_report()
+        r.impact_paths = [
+            {"path": ["src/a.ts", "src/b.ts"], "risk": "high",   "reason": "r1"},
+            {"path": ["src/a.ts", "src/c.ts"], "risk": "medium", "reason": "r2"},
+        ]
+        output = self._render(r)
+        assert "2 条" in output
+
+    def test_fallback_shows_symbol_as_root(self):
+        from phases.blast_radius import BlastRadiusItem
+        item = BlastRadiusItem(
+            file="src/b.ts", line=10, symbol="x",
+            risk="high", confidence="medium", reason="breaks here",
+        )
+        r = _make_report(blast=[item])
+        r.changed_symbols = [{"name": "myFunc", "file": "src/a.ts"}]
+        output = self._render(r)
+        assert "myFunc" in output
+        assert "b.ts" in output
+
+    def test_fallback_shows_reason(self):
+        from phases.blast_radius import BlastRadiusItem
+        item = BlastRadiusItem(
+            file="src/b.ts", line=10, symbol="x",
+            risk="high", confidence="medium", reason="breaks here",
+        )
+        r = _make_report(blast=[item])
+        output = self._render(r)
+        assert "breaks here" in output
+
+    def test_section_header_says_影响链路(self):
+        r = _make_report()
+        r.impact_paths = [{"path": ["src/a.ts", "src/b.ts"], "risk": "high", "reason": "r"}]
+        output = self._render(r)
+        assert "影响链路" in output
