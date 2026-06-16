@@ -3,7 +3,7 @@
 <p align="center">
   <img src="assets/avatar.jpeg" width="120" height="120" style="border-radius:50%; object-fit:cover;" />
 </p>
-<p align="center" style="font-size:16px;">我chavy&nbsp;写代码给我写好了呀！</p>
+<h1 align="center">我chavy&nbsp;写代码给我写好了呀！</h1>
 
 
 > 不是把 diff 丢给大模型，而是先用静态分析构建**结构化证据链**，再基于证据让 AI 做出可追溯的判断。
