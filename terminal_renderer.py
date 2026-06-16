@@ -303,123 +303,19 @@ class FixCandidate:
     suggestion: str = ""
 
 
-def build_explosion_map(report: "ReviewReport"):
-    """Nested-ring explosion map. Returns outermost Panel or None."""
-    if not RICH_AVAILABLE:
-        return None
+@dataclass
+class ChainNode:
+    file: str
+    line: int
+    reason: str
+    risk: str = "low"
 
-    all_items = list(report.blast_radius_items) + list(report.code_quality_items) + list(report.backend_review_items)
-    if not all_items:
-        return None
 
-    # ── 改动点汇总（中心框内容） ────────────────────────────────────────────
-    symbols = []
-    files_seen: set = set()
-    files = []
-    for s in report.changed_symbols:
-        if isinstance(s, dict):
-            name = s.get("name") or s.get("symbol", "")
-            if name:
-                symbols.append(name)
-            f = s.get("file", "")
-            if f and f not in files_seen:
-                files_seen.add(f)
-                files.append(f.split("/")[-1])  # 只取文件名
-
-    if not symbols:
-        # 从 blast items 补充
-        for item in report.blast_radius_items:
-            sym = getattr(item, "symbol", "")
-            if sym and sym not in symbols:
-                symbols.append(sym)
-        files = list({item.file.split("/")[-1] for item in report.blast_radius_items})
-
-    symbols = symbols[:6]
-    files   = files[:5]
-
-    center_text = Text(justify="center")
-    if symbols:
-        center_text.append("  ".join(symbols) + "\n", style="bold cyan")
-    center_text.append("  ·  ".join(files) if files else "—", style="dim")
-
-    inner = Panel(
-        Align.center(center_text),
-        border_style="cyan",
-        padding=(1, 4),
-        subtitle="[dim cyan]改动入口[/dim cyan]",
-    )
-
-    # ── 圈层构建（从内到外：高→中→低） ────────────────────────────────────────
-    _MAX_PER_RING = 6  # 每圈最多显示条目数，超出折叠
-
-    def _cell(item, icon, color) -> Text:
-        """单个条目的卡片式文本（两行：标题行 + 证据行）"""
-        sym    = getattr(item, "symbol", "") or getattr(item, "issue_type", "")
-        reason = getattr(item, "reason", None) or getattr(item, "description", "")
-        t = Text()
-        t.append(f" {icon} ", style=color)
-        if sym:
-            t.append(sym, style=f"bold {color}")
-            t.append("  ")
-        t.append(reason)
-        t.append(f"\n    {item.file}:{item.line}", style="dim")
-        return t
-
-    def ring_grid(items, icon, color) -> Table:
-        """2 列网格，每格一个条目，行间留一行空白增加呼吸感。"""
-        seen: set = set()
-        deduped = []
-        for item in items:
-            key = f"{item.file}:{item.line}"
-            if key not in seen:
-                seen.add(key)
-                deduped.append(item)
-
-        overflow = max(0, len(deduped) - _MAX_PER_RING)
-        visible  = deduped[:_MAX_PER_RING]
-
-        tbl = Table(box=None, padding=(1, 2), expand=True, show_header=False, show_edge=False)
-        tbl.add_column(ratio=1, overflow="fold")
-        tbl.add_column(ratio=1, overflow="fold")
-
-        pairs = list(zip(visible[::2], visible[1::2]))
-        # 奇数条目时最后一行只有左格
-        if len(visible) % 2 == 1:
-            pairs.append((visible[-1], None))
-
-        for left_item, right_item in pairs:
-            left  = _cell(left_item, icon, color)
-            if right_item is not None:
-                right = _cell(right_item, icon, color)
-            else:
-                right = Text("")
-            tbl.add_row(left, right)
-
-        if overflow > 0:
-            tbl.add_row(
-                Text(f"  +{overflow} 处未展示", style="dim"),
-                Text(""),
-            )
-        return tbl
-
-    for risk_level, icon, color, title_label, sublabel in [
-        ("high",   "🚨", "red",    "🚨  高风险  —  直接影响",  "bold red"),
-        ("medium", "⚠️",  "yellow", "⚠️   中风险  —  间接影响", "bold yellow"),
-        ("low",    "💡", "blue",   "💡  低风险  —  远端影响",   "bold blue"),
-    ]:
-        ring_items = [i for i in all_items if i.risk == risk_level]
-        if not ring_items:
-            continue
-        grid = ring_grid(ring_items, icon, color)
-        inner = Panel(
-            Group(inner, Text(""), grid),
-            title=f"[{sublabel}]{title_label}[/{sublabel}]",
-            border_style=color,
-            padding=(0, 2),
-            subtitle=f"[dim {color}]{len(ring_items)} 处[/dim {color}]",
-        )
-
-    return inner
+@dataclass
+class ImpactBlock:
+    symbol_name: str
+    risk: str
+    chains: list  # list[list[ChainNode]]
 
 
 def _classify_fix_candidate(item) -> tuple[str, str]:
@@ -438,6 +334,211 @@ def _classify_fix_candidate(item) -> tuple[str, str]:
     if hasattr(item, "needs_human_review"):  # is a BlastRadiusItem
         return "assist", ("高价值" if risk == "high" else "建议")
     return "manual", "建议"
+
+
+def _group_impact_paths(report: "ReviewReport") -> list:
+    """Group impact_paths by source symbol; annotate nodes from blast_radius_items."""
+    valid_paths = [
+        p for p in report.impact_paths
+        if isinstance(p.get("path"), list) and len(p["path"]) >= 2
+    ]
+    if not valid_paths:
+        return []
+
+    _rv = {"high": 0, "medium": 1, "low": 2}
+
+    blast_by_file: dict = {}
+    for item in report.blast_radius_items:
+        blast_by_file.setdefault(item.file, []).append(item)
+
+    symbol_names: dict = {}
+    for s in report.changed_symbols:
+        f = s.get("file", "")
+        symbol_names[f] = s.get("name", "") or f.split("/")[-1]
+
+    from collections import defaultdict
+    by_source: dict = defaultdict(list)
+    for p in valid_paths:
+        by_source[str(p["path"][0])].append(p)
+
+    blocks = []
+    for src, paths in by_source.items():
+        symbol_name = symbol_names.get(src, src.split("/")[-1])
+        block_risk = min(
+            (p.get("risk", "low") for p in paths),
+            key=lambda r: _rv.get(r, 2),
+        )
+        chains = []
+        for p in paths:
+            path_reason = str(p.get("reason", ""))
+            chain = []
+            path_nodes = p["path"]
+            for i, node_file in enumerate(path_nodes[1:], 1):
+                node_str = str(node_file)
+                items = blast_by_file.get(node_str, [])
+                if items:
+                    best = min(items, key=lambda it: _rv.get(it.risk, 2))
+                    chain.append(ChainNode(
+                        file=node_str,
+                        line=best.line,
+                        reason=getattr(best, "reason", "") or "",
+                        risk=best.risk,
+                    ))
+                else:
+                    is_leaf = (i == len(path_nodes) - 1)
+                    chain.append(ChainNode(
+                        file=node_str,
+                        line=0,
+                        reason=path_reason if is_leaf else "",
+                        risk=p.get("risk", "low"),
+                    ))
+            if chain:
+                chains.append(chain)
+
+        if chains:
+            blocks.append(ImpactBlock(
+                symbol_name=symbol_name,
+                risk=block_risk,
+                chains=chains,
+            ))
+
+    return blocks
+
+
+def build_blast_chain(report: "ReviewReport", max_chains: int = 3, max_nodes: int = 5) -> list:
+    """Return simplified path chain strings: 'a.ts → b.ts → c.ts'."""
+    if report.impact_paths:
+        chains = []
+        for path_dict in report.impact_paths[:max_chains]:
+            path = path_dict.get("path", [])
+            if not isinstance(path, list) or not path:
+                continue
+            nodes = [str(p).split("/")[-1] for p in path[:max_nodes]]
+            suffix = " → ..." if len(path) > max_nodes else ""
+            chains.append(" → ".join(nodes) + suffix)
+        if chains:
+            return chains
+    files = list(dict.fromkeys(i.file.split("/")[-1] for i in report.blast_radius_items))
+    if files:
+        return ["  ·  ".join(files[:max_nodes])]
+    return []
+
+
+def _cmd_for_item(item, fix_candidates: list) -> str | None:
+    """Return the command hint for an item from the fix queue, or None."""
+    for fc in fix_candidates:
+        if fc.file == item.file and fc.line == item.line:
+            return fc.command_hint
+    return None
+
+
+def _cmd_for_checkpoint(cp: "CheckpointResult", fix_candidates: list) -> str | None:
+    """Return 'luna detail N' for the fix candidate matching this checkpoint's evidence."""
+    if not cp.evidence or cp.evidence == "-" or ":" not in cp.evidence:
+        return None
+    parts = cp.evidence.rsplit(":", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        file_part, line_part = parts[0], int(parts[1])
+    except ValueError:
+        return None
+    for fc in fix_candidates:
+        if fc.file == file_part and fc.line == line_part:
+            return f"luna detail {fc.id}"
+    return None
+
+
+def _render_blast_section(console: "Console", report: "ReviewReport") -> None:
+    """Render blast radius as risk-colored impact chains with reasons."""
+    impact_paths = [
+        p for p in report.impact_paths
+        if isinstance(p.get("path"), list) and len(p["path"]) >= 2
+    ]
+    blast_items = list(report.blast_radius_items)
+
+    if not impact_paths and not blast_items:
+        return
+
+    _RISK_STYLE = {"high": "bold red", "medium": "bold yellow", "low": "cyan"}
+    _RISK_ICON  = {"high": "🚨", "medium": "⚠️",  "low": "💡"}
+    _rv         = {"high": 0, "medium": 1, "low": 2}
+
+    console.print(Rule("💥  爆炸范围", style="dim"))
+    console.print()
+
+    if impact_paths:
+        for p in sorted(impact_paths[:6], key=lambda x: _rv.get(x.get("risk", "low"), 2)):
+            risk   = p.get("risk", "low")
+            nodes  = [str(n).split("/")[-1] for n in p["path"]]
+            reason = str(p.get("reason", ""))[:90]
+            style  = _RISK_STYLE.get(risk, "dim")
+            icon   = _RISK_ICON.get(risk, "")
+
+            chain = " → ".join(nodes[:6])
+            if len(nodes) > 6:
+                chain += " → …"
+
+            header = Text()
+            header.append(f"  {icon}  ", style=style)
+            header.append(chain, style=style)
+            console.print(header)
+
+            if reason:
+                console.print(Padding(Text(reason, style="dim"), (0, 6)))
+        console.print()
+    else:
+        # No graph paths — list blast items grouped as a tree under changed symbols
+        changed = list(report.changed_symbols)
+        root_label = changed[0].get("name", "") or changed[0].get("file", "改动") if changed else "改动"
+        tree = Tree(f"[bold cyan]{str(root_label).split('/')[-1]}[/bold cyan]  [dim](changed)[/dim]")
+
+        for item in sorted(blast_items[:8], key=lambda i: _rv.get(i.risk, 3)):
+            style  = _RISK_STYLE.get(item.risk, "dim")
+            icon   = _RISK_ICON.get(item.risk, "")
+            reason = (getattr(item, "reason", "") or "")[:70]
+            fname  = item.file.split("/")[-1]
+            tree.add(f"{icon}  [{style}]{fname}:{item.line}[/{style}]  [dim]{reason}[/dim]")
+
+        console.print(Padding(tree, (0, 2)))
+        console.print()
+
+
+def _render_item_card(console: "Console", item, fix_candidates: list, icon: str, style: str) -> None:
+    """Render a 3-4 line expanded card for a high/medium risk item with inline command."""
+    reason     = getattr(item, "reason", None) or getattr(item, "description", "")
+    suggestion = getattr(item, "suggestion", "") or ""
+    cmd        = _cmd_for_item(item, fix_candidates)
+
+    header = Text()
+    header.append(f"  {icon}  ", style=style)
+    header.append(f"{item.file}:{item.line}", style="bold")
+    header.append("  —  ")
+    header.append(reason[:80])
+    console.print(header)
+
+    if suggestion:
+        console.print(Padding(Text(suggestion[:120], style="dim"), (0, 6)))
+
+    if cmd:
+        auto_label = "  🤖 自动修复" if "fix" in cmd and "--preview" not in cmd else ""
+        console.print(Padding(Text(f"$ {cmd}{auto_label}", style="bold green"), (0, 6)))
+
+    console.print()
+
+
+def _render_item_inline(console: "Console", item, fix_candidates: list) -> None:
+    """Render a single compact line for a low risk item."""
+    reason = getattr(item, "reason", None) or getattr(item, "description", "")
+    cmd    = _cmd_for_item(item, fix_candidates)
+    line   = Text()
+    line.append("  💡  ", style="dim blue")
+    line.append(f"{item.file}:{item.line}", style="bold")
+    line.append("  —  ")
+    line.append(reason[:60])
+    if cmd:
+        line.append(f"    $ {cmd}", style="bold green")
+    console.print(line)
 
 
 def build_fix_queue(report: "ReviewReport") -> list:
@@ -559,58 +660,39 @@ def _render_plain(report, runtime, quiet: bool) -> None:
 
 
 def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
-    """Full Rich render."""
+    """Full Rich render — v2: item cards with inline commands."""
     verdict_label, verdict_style = build_verdict(report)
     high, medium, low = _count_risks(report)
 
     # ── 标题 ─────────────────────────────────────────────────────────────────
+    info_parts = [
+        runtime.project_name or "—",
+        runtime.project_type,
+        f"{runtime.changed_files} files  {runtime.changed_lines} lines",
+        f"{runtime.elapsed_seconds}s",
+    ]
+    title_text = "  ·  ".join(p for p in info_parts if p)
     console.print()
-    console.print(Rule("[bold cyan]🌙  Luna Review[/bold cyan]", style="cyan"))
+    console.print(Rule(f"[bold cyan]🌙  Luna Review[/bold cyan]  [dim]{title_text}[/dim]", style="cyan"))
     console.print()
 
-    # ── Verdict（居中，固定宽度，不铺满全屏）─────────────────────────────────
-    verdict_icon = {
+    # ── Verdict + 风险数 ──────────────────────────────────────────────────────
+    _verdict_icon = {
         "阻塞提交":        "🚫",
         "建议修复后提交":   "⚠️",
         "可提交但建议关注": "💡",
         "可提交":          "✅",
-    }.get(verdict_label, "")
-    verdict_panel = Panel(
-        Text(f"{verdict_icon}  {verdict_label}", style=verdict_style, justify="center"),
-        border_style=verdict_style,
-        padding=(1, 6),
-        width=52,
-    )
-    console.print(Align.center(verdict_panel))
-    console.print()
-
-    # ── 摘要：一行信息条 + 一行风险徽章 ──────────────────────────────────────
-    backend_label = "skipped" if runtime.backend_review_status == "skipped" else runtime.backend_review_status
-    sep = Text("  ·  ", style="dim")
-
-    info_line = Text()
-    info_line.append(runtime.project_name or "—", style="bold")
-    info_line.append("  ·  ", style="dim")
-    info_line.append(runtime.project_type, style="cyan")
-    info_line.append("  ·  ", style="dim")
-    info_line.append(runtime.diff_scope, style="dim")
-    info_line.append("  ·  ", style="dim")
-    info_line.append(f"{runtime.changed_files} files  {runtime.changed_lines} lines", style="dim")
-    info_line.append("  ·  ", style="dim")
-    info_line.append(f"{runtime.elapsed_seconds}s", style="dim")
-    info_line.append("  ·  ", style="dim")
-    info_line.append(f"后端: {backend_label}", style="dim")
-
-    risk_line = Text()
-    risk_line.append("  🚨 ", style="")
-    risk_line.append(str(high), style="bold red" if high else "dim")
-    risk_line.append("   ⚠️  ", style="")
-    risk_line.append(str(medium), style="bold yellow" if medium else "dim")
-    risk_line.append("   💡 ", style="")
-    risk_line.append(str(low), style="bold blue" if low else "dim")
-
-    console.print(Padding(info_line, (0, 2)))
-    console.print(Padding(risk_line, (0, 2)))
+    }
+    verdict_line = Text()
+    verdict_line.append(f"{_verdict_icon.get(verdict_label, '')}  {verdict_label}", style=verdict_style)
+    verdict_line.append("     ")
+    verdict_line.append("🚨 ")
+    verdict_line.append(str(high),   style="bold red"    if high   else "dim")
+    verdict_line.append("   ⚠️  ")
+    verdict_line.append(str(medium), style="bold yellow" if medium else "dim")
+    verdict_line.append("   💡 ")
+    verdict_line.append(str(low),    style="bold blue"   if low    else "dim")
+    console.print(Padding(verdict_line, (0, 2)))
     console.print()
 
     if quiet:
@@ -618,167 +700,86 @@ def _render_rich(console: "Console", report, runtime, quiet: bool) -> None:
             console.print(Rule(f"[dim]报告: {runtime.report_path}[/dim]", style="dim"))
         return
 
-    # ── 自动发现的审查关注点 ──────────────────────────────────────────────────
-    if report.review_questions:
-        lines = Text()
-        for i, q in enumerate(report.review_questions):
-            if i > 0:
-                lines.append("\n")
-            lines.append(f"• {q}")
+    # build fix queue once — provides inline command hints throughout
+    fix_candidates = build_fix_queue(report)
 
-        questions_panel = Panel(
-            lines,
-            title="[bold yellow]🔍 自动发现的审查关注点[/bold yellow]",
-            border_style="yellow",
-            padding=(0, 2),
-        )
-        console.print(questions_panel)
+    # ── 必须修复 ──────────────────────────────────────────────────────────────
+    all_items = list(report.blast_radius_items) + list(report.code_quality_items)
+    high_items = [i for i in all_items if i.risk == "high"]
+    if high_items:
+        console.print(Rule("[bold]🔴  必须修复[/bold]", style="dim"))
         console.print()
+        for item in high_items[:5]:
+            _render_item_card(console, item, fix_candidates, icon="🚨", style="bold red")
+        overflow = len(high_items) - 5
+        if overflow > 0:
+            console.print(Padding(
+                Text(f"  + {overflow} 条高风险，运行 luna detail 查看完整报告", style="dim yellow"),
+                (0, 4),
+            ))
+            console.print()
+
+    # ── 建议修复 ──────────────────────────────────────────────────────────────
+    medium_items = [i for i in all_items if i.risk == "medium"]
+    low_items    = [i for i in all_items if i.risk == "low"]
+    if medium_items or low_items:
+        console.print(Rule("[bold]⚠️   建议修复[/bold]", style="dim"))
+        console.print()
+        for item in medium_items:
+            _render_item_card(console, item, fix_candidates, icon="⚠️", style="bold yellow")
+        for item in low_items:
+            _render_item_inline(console, item, fix_candidates)
+        if low_items:
+            console.print()
+
+    # ── 爆炸范围 ──────────────────────────────────────────────────────────────
+    _render_blast_section(console, report)
 
     # ── 审查点命中 ────────────────────────────────────────────────────────────
     checkpoints = build_checkpoints(report)
-    hits  = [cp for cp in checkpoints if cp.status != "ok"]
-    clean = [cp for cp in checkpoints if cp.status == "ok"]
-
-    console.print(Rule("🔍  审查点命中", style="dim"))
-    console.print()
-
-    cp_tbl = Table(
-        show_header=True,
-        header_style="bold",
-        box=rich_box.ROUNDED,
-        padding=(0, 1),
-        border_style="dim",
-        show_lines=True,
-        expand=True,
-    )
-    cp_tbl.add_column("",        min_width=2,  no_wrap=True, justify="center")
-    cp_tbl.add_column("审查点",  style="bold", min_width=10, no_wrap=True)
-    cp_tbl.add_column("风险说明", min_width=28, ratio=4)
-    cp_tbl.add_column("证据",    min_width=18, no_wrap=True, style="dim")
-    cp_tbl.add_column("修复方式", min_width=9,  no_wrap=True)
-
-    _cp_icon  = {"high": "🚨", "medium": "⚠️", "low": "💡", "ok": "✅"}
-    _cp_style = {"high": "bold red", "medium": "bold yellow", "low": "bold blue", "ok": "dim green"}
-    _fix_icon = {"manual": "👤", "assist": "🔧", "auto": "🤖", "-": ""}
-    _fix_color = {"manual": "red", "assist": "yellow", "auto": "green"}
-
-    for cp in hits:
-        icon  = _cp_icon.get(cp.status, "")
-        style = _cp_style.get(cp.status, "")
-        fix_icon  = _fix_icon.get(cp.fix_mode, "")
-        fix_color = _fix_color.get(cp.fix_mode, "dim")
-        cp_tbl.add_row(
-            Text(icon,  style=style),
-            Text(cp.name, style=style),
-            cp.reason,
-            cp.evidence,
-            Text(f"{fix_icon} {cp.fix_mode}", style=fix_color),
-        )
-
-    if hits and clean:
-        cp_tbl.add_section()
-
-    for cp in clean:
-        cp_tbl.add_row(
-            Text("✅", style="dim green"),
-            Text(cp.name, style="dim"),
-            Text("未发现明显风险", style="dim"),
-            Text("-", style="dim"),
-            Text("-", style="dim"),
-        )
-
-    console.print(cp_tbl)
-    console.print()
-
-    # ── 业务爆炸影响范围地图 ──────────────────────────────────────────────────
-    console.print(Rule("💥  业务爆炸影响范围地图", style="dim"))
-    console.print()
-    explosion = build_explosion_map(report)
-    if explosion is not None:
-        console.print(explosion)
-    else:
-        console.print(Padding("[dim]未发现明确传播链路[/dim]", (0, 2)))
-    console.print()
-
-    # ── 修复队列 ──────────────────────────────────────────────────────────────
-    fix_queue = build_fix_queue(report)
-    if fix_queue:
-        console.print(Rule("🛠  修复队列", style="dim"))
+    hit_cps = [cp for cp in checkpoints if cp.status != "ok"]
+    if hit_cps:
+        console.print(Rule("🔍  审查点命中", style="dim"))
         console.print()
-        fq_tbl = Table(
-            show_header=True,
-            header_style="bold",
-            box=rich_box.ROUNDED,
-            padding=(0, 1),
-            border_style="dim",
-            show_lines=True,
-            expand=True,
-        )
-        fq_tbl.add_column("#",    style="dim",  min_width=2,  justify="right", no_wrap=True)
-        fq_tbl.add_column("模式",  min_width=10, no_wrap=True)
-        fq_tbl.add_column("影响",  min_width=8,  no_wrap=True)
-        fq_tbl.add_column("说明",  min_width=28, ratio=4)
-        fq_tbl.add_column("命令",  style="dim",  min_width=22, no_wrap=True)
-
-        _mode_icon   = {"auto": "🤖", "assist": "🔧", "manual": "👤"}
-        _mode_color  = {"auto": "green", "assist": "yellow", "manual": "red"}
-        _impact_icon  = {"阻塞": "🚫", "高价值": "⚡", "建议": "💬", "延后": "⏳"}
-        _impact_color = {"阻塞": "bold red", "高价值": "red", "建议": "yellow", "延后": "dim"}
-
-        for fc in fix_queue:
-            m_icon  = _mode_icon.get(fc.mode, "")
-            m_color = _mode_color.get(fc.mode, "")
-            i_icon  = _impact_icon.get(fc.impact, "")
-            i_color = _impact_color.get(fc.impact, "")
-            fq_tbl.add_row(
-                str(fc.id),
-                Text(f"{m_icon} {fc.mode}",   style=m_color),
-                Text(f"{i_icon} {fc.impact}", style=i_color),
-                fc.title,
-                fc.command_hint,
-            )
-        console.print(fq_tbl)
+        _cp_icon  = {"high": "🚨", "medium": "⚠️", "low": "💡"}
+        _cp_style = {"high": "bold red", "medium": "bold yellow", "low": "dim blue"}
+        for cp in hit_cps:
+            icon  = _cp_icon.get(cp.status, "")
+            style = _cp_style.get(cp.status, "")
+            cmd   = _cmd_for_checkpoint(cp, fix_candidates)
+            line  = Text()
+            line.append(f"  {icon} ", style=style)
+            line.append(f"{cp.name:<12}", style=style)
+            line.append(f"  {cp.evidence:<28}", style="dim")
+            if cmd:
+                line.append(f"  $ {cmd}", style="bold green")
+            console.print(line)
         console.print()
 
-    # ── 反驳过滤 ──────────────────────────────────────────────────────────────
+    # ── 反驳验证 ──────────────────────────────────────────────────────────────
     refuted = getattr(report, "adversarial_refuted", [])
     if refuted:
         console.print(Rule("🔬  反驳验证 — 已过滤误报", style="dim"))
         console.print()
         rf_tbl = Table(
-            show_header=True,
-            header_style="bold dim",
-            box=rich_box.SIMPLE,
-            padding=(0, 1),
-            border_style="dim",
-            expand=True,
+            show_header=True, header_style="bold dim",
+            box=rich_box.SIMPLE, padding=(0, 1), border_style="dim", expand=True,
         )
-        rf_tbl.add_column("符号",   style="dim", min_width=12, no_wrap=True)
-        rf_tbl.add_column("位置",   style="dim", min_width=16, no_wrap=True)
-        rf_tbl.add_column("原因（已被反驳）", min_width=20, ratio=3)
-        rf_tbl.add_column("反驳理由", min_width=20, ratio=3)
+        rf_tbl.add_column("符号",             style="dim", min_width=12, no_wrap=True)
+        rf_tbl.add_column("位置",             style="dim", min_width=16, no_wrap=True)
+        rf_tbl.add_column("原因（已被反驳）",  min_width=20, ratio=3)
+        rf_tbl.add_column("反驳理由",          min_width=20, ratio=3)
         for rf in refuted:
             item = rf.item
-            sym = getattr(item, "symbol", "") or "—"
-            loc = f"{item.file}:{item.line}"
+            sym  = getattr(item, "symbol", "") or "—"
             rf_tbl.add_row(
                 Text(sym, style="dim"),
-                Text(loc, style="dim"),
+                Text(f"{item.file}:{item.line}", style="dim"),
                 Text(getattr(item, "reason", ""), style="dim strike"),
                 Text(rf.adv_reason, style="dim green"),
             )
         console.print(rf_tbl)
         console.print()
-
-    # ── Token 节省面板 ────────────────────────────────────────────────────────
-    if not quiet and report.token_savings:
-        savings_text = render_token_savings_panel(report.token_savings)
-        if savings_text:
-            console.print(Rule("💰  Token 使用情况", style="dim"))
-            console.print()
-            console.print(Padding(savings_text, (0, 2)))
-            console.print()
 
     # ── 页脚 ──────────────────────────────────────────────────────────────────
     if runtime.report_path:
