@@ -53,7 +53,7 @@ if (-not $pipxOk) {
 
 # ── 3. 安装 Luna ──────────────────────────────────────────────
 $REPO = "https://github.com/optimesPrime/code-review-luna.git"
-$pipxList = (pipx list 2>$null)
+$pipxList = try { (& pipx list 2>&1) -join "`n" } catch { "" }
 if ($pipxList -match "package luna") {
     Info "检测到已安装 Luna，正在升级..."
     pipx upgrade luna
