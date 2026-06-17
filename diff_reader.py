@@ -14,7 +14,7 @@ def get_diff(staged: bool = False, since: Optional[str] = None) -> str:
         capture_output=True, text=True, encoding='utf-8',
     )
     if check.returncode != 0:
-        raise DiffError("当前目录不是 git 仓库，请在项目根目录下运行 cr")
+        raise DiffError("当前目录不是 git 仓库，请在项目根目录下运行 luna")
 
     if staged:
         cmd = ["git", "diff", "--cached"]

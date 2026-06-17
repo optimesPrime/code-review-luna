@@ -112,7 +112,7 @@ def render(report: ReviewReport) -> str:
 > 由人工复审填写
 
 ---
-*cr tool · 仅供参考*
+* luna code review · 仅供参考*
 """
 
 
