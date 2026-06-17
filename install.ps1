@@ -56,7 +56,10 @@ $REPO = "https://github.com/optimesPrime/code-review-luna.git"
 $pipxList = (pipx list 2>$null)
 if ($pipxList -match "package luna") {
     Info "检测到已安装 Luna，正在升级..."
-    try { pipx upgrade luna } catch {
+    try {
+        pipx upgrade luna
+        if ($LASTEXITCODE -ne 0) { throw "upgrade 失败" }
+    } catch {
         pipx install --force "git+$REPO"
         if ($LASTEXITCODE -ne 0) { Fail "Luna 安装失败，请检查网络或 GitHub 访问" }
     }
