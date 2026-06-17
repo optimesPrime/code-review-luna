@@ -558,7 +558,7 @@ def cli(ctx, staged, since, tests, phase, apply_mode, interactive, project_type,
         import subprocess as _sp
         _commit_hash = _sp.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True, text=True, encoding='utf-8', timeout=3,
         ).stdout.strip()
     except Exception:
         pass
