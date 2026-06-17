@@ -128,7 +128,7 @@ class LunaWebServer:
                         proc = subprocess.Popen(
                             cmd, shell=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True,
+                            text=True, encoding='utf-8',
                         )
                         for line in proc.stdout:
                             with server_ref._output_lock:

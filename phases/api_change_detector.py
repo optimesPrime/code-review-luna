@@ -31,7 +31,7 @@ def _get_old_content(file_path: str, project_root: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", "show", f"HEAD:{file_path}"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding='utf-8', timeout=10,
             cwd=project_root,
         )
         return result.stdout if result.returncode == 0 else None

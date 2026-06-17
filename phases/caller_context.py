@@ -79,7 +79,7 @@ def grep_call_sites(
     cmd.extend([symbol, project_root])
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=10)
     except subprocess.TimeoutExpired:
         return []
 

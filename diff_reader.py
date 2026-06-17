@@ -11,7 +11,7 @@ class DiffError(Exception):
 def get_diff(staged: bool = False, since: Optional[str] = None) -> str:
     check = subprocess.run(
         ["git", "rev-parse", "--git-dir"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding='utf-8',
     )
     if check.returncode != 0:
         raise DiffError("当前目录不是 git 仓库，请在项目根目录下运行 cr")
@@ -23,7 +23,7 @@ def get_diff(staged: bool = False, since: Optional[str] = None) -> str:
     else:
         cmd = ["git", "diff", "HEAD"]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
     return result.stdout
 
 

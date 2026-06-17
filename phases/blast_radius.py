@@ -94,7 +94,7 @@ def find_usages_in_project(symbols: list[str], ignore_dirs: list[str]) -> str:
         for d in ignore_dirs:
             cmd.extend(["--exclude-dir", d.rstrip("/")])
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=10)
             if result.stdout.strip():
                 results.append(f"# `{symbol}` 的使用位置:\n{result.stdout[:3000]}")
         except subprocess.TimeoutExpired:
