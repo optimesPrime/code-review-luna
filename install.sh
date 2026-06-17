@@ -52,12 +52,11 @@ fi
 REPO="https://github.com/optimesPrime/code-review-luna.git"
 
 if pipx list 2>/dev/null | grep -q "package luna"; then
-    info "检测到已安装 Luna，正在升级..."
-    pipx upgrade luna 2>/dev/null || pipx install --force "git+$REPO"
+    info "检测到已安装 Luna，正在重新安装最新版本..."
 else
     info "正在从 GitHub 安装 Luna..."
-    pipx install "git+$REPO"
 fi
+pipx install --force "git+$REPO"
 ok "Luna 安装完成"
 
 # ── 4. 初始化配置文件 ─────────────────────────────────────────

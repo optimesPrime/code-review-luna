@@ -55,17 +55,12 @@ if (-not $pipxOk) {
 $REPO = "https://github.com/optimesPrime/code-review-luna.git"
 $pipxList = try { (& pipx list 2>&1) -join "`n" } catch { "" }
 if ($pipxList -match "package luna") {
-    Info "检测到已安装 Luna，正在升级..."
-    pipx upgrade luna
-    if ($LASTEXITCODE -ne 0) {
-        pipx install --force "git+$REPO"
-        if ($LASTEXITCODE -ne 0) { Fail "Luna 安装失败，请检查网络或 GitHub 访问" }
-    }
+    Info "检测到已安装 Luna，正在重新安装最新版本..."
 } else {
     Info "正在从 GitHub 安装 Luna..."
-    pipx install "git+$REPO"
-    if ($LASTEXITCODE -ne 0) { Fail "Luna 安装失败，请检查网络或 GitHub 访问" }
 }
+pipx install --force "git+$REPO"
+if ($LASTEXITCODE -ne 0) { Fail "Luna 安装失败，请检查网络或 GitHub 访问" }
 Ok "Luna 安装完成"
 
 # ── 4. 初始化配置文件 ─────────────────────────────────────────
