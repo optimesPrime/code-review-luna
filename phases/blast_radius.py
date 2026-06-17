@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -80,25 +81,35 @@ def extract_changed_symbols(diff: str) -> list[str]:
     return list(symbols)
 
 
+_BLAST_EXTENSIONS = {".vue", ".ts", ".js", ".tsx"}
+
+
+def _grep_py(symbol: str, root: str, ignore_dirs: list[str]) -> str:
+    ignore_set = {d.rstrip("/").rstrip("\\") for d in ignore_dirs}
+    lines: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in ignore_set]
+        for filename in filenames:
+            if os.path.splitext(filename)[1] in _BLAST_EXTENSIONS:
+                filepath = os.path.join(dirpath, filename)
+                try:
+                    with open(filepath, encoding='utf-8', errors='ignore') as f:
+                        for lineno, line in enumerate(f, 1):
+                            if symbol in line:
+                                lines.append(f"{filepath}:{lineno}:{line.rstrip()}")
+                except OSError:
+                    pass
+    return "\n".join(lines)
+
+
 def find_usages_in_project(symbols: list[str], ignore_dirs: list[str]) -> str:
     if not symbols:
         return ""
     results: list[str] = []
     for symbol in symbols[:10]:
-        cmd = [
-            "grep", "-rn",
-            "--include=*.vue", "--include=*.ts",
-            "--include=*.js", "--include=*.tsx",
-            symbol, ".",
-        ]
-        for d in ignore_dirs:
-            cmd.extend(["--exclude-dir", d.rstrip("/")])
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=10)
-            if result.stdout.strip():
-                results.append(f"# `{symbol}` 的使用位置:\n{result.stdout[:3000]}")
-        except subprocess.TimeoutExpired:
-            results.append(f"# `{symbol}`: 搜索超时")
+        output = _grep_py(symbol, ".", ignore_dirs)
+        if output.strip():
+            results.append(f"# `{symbol}` 的使用位置:\n{output[:3000]}")
     return "\n".join(results)
 
 

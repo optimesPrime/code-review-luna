@@ -1,6 +1,5 @@
 from __future__ import annotations
 import os
-import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -65,28 +64,34 @@ def _common_prefix_length(a: str, b: str) -> int:
     return n
 
 
+_CALLER_EXTENSIONS = {os.path.splitext(e)[1] for e in _INCLUDE_EXTENSIONS}
+
+
 def grep_call_sites(
     symbol: str,
     project_root: str,
     ignore_dirs: list[str],
     self_file: str | None = None,
 ) -> list[tuple[str, int]]:
-    cmd = ["grep", "-rn"]
-    for ext in _INCLUDE_EXTENSIONS:
-        cmd.extend(["--include", ext])
-    for d in ignore_dirs:
-        cmd.extend(["--exclude-dir", d.rstrip("/")])
-    cmd.extend([symbol, project_root])
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=10)
-    except subprocess.TimeoutExpired:
-        return []
+    ignore_set = {d.rstrip("/").rstrip("\\") for d in ignore_dirs}
+    raw_lines: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(project_root):
+        dirnames[:] = [d for d in dirnames if d not in ignore_set]
+        for filename in filenames:
+            if os.path.splitext(filename)[1] in _CALLER_EXTENSIONS:
+                filepath = os.path.join(dirpath, filename)
+                try:
+                    with open(filepath, encoding='utf-8', errors='ignore') as f:
+                        for lineno, line in enumerate(f, 1):
+                            if symbol in line:
+                                raw_lines.append(f"{filepath}:{lineno}:{line.rstrip()}")
+                except OSError:
+                    pass
 
     self_norm = os.path.normpath(self_file) if self_file else None
     hits: list[tuple[str, int]] = []
 
-    for raw_line in result.stdout.splitlines():
+    for raw_line in raw_lines:
         parts = raw_line.split(":", 2)
         if len(parts) < 3:
             continue
