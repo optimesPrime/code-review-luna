@@ -1,3 +1,4 @@
+# 仅对本次安装进程临时放开执行策略，不修改系统/用户级设置
 Set-ExecutionPolicy Bypass -Scope Process -Force
 $ErrorActionPreference = 'Stop'
 
@@ -18,7 +19,7 @@ foreach ($cmd in @("python", "python3")) {
         $ver = & $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
         if ($ver) {
             $parts = $ver -split '\.'
-            if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 11) {
+            if ([int]$parts[0] -gt 3 -or ([int]$parts[0] -eq 3 -and [int]$parts[1] -ge 11)) {
                 $PYTHON = $cmd
                 Ok "Python $ver"
                 break
@@ -42,7 +43,8 @@ if (-not $pipxOk) {
     # 从注册表刷新当前进程的 PATH
     $userPath    = [System.Environment]::GetEnvironmentVariable("PATH", "User")
     $machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
-    $env:PATH = "$userPath;$machinePath"
+    $pipxBin     = Join-Path $HOME ".local\bin"
+    $env:PATH = "$userPath;$machinePath;$pipxBin"
     try {
         $pipxVer = (pipx --version 2>$null)
         if ($pipxVer) { Ok "pipx 安装完成" } else { Fail "pipx 安装失败，请手动执行：pip install pipx" }
@@ -54,10 +56,14 @@ $REPO = "https://github.com/optimesPrime/code-review-luna.git"
 $pipxList = (pipx list 2>$null)
 if ($pipxList -match "package luna") {
     Info "检测到已安装 Luna，正在升级..."
-    try { pipx upgrade luna } catch { pipx install --force "git+$REPO" }
+    try { pipx upgrade luna } catch {
+        pipx install --force "git+$REPO"
+        if ($LASTEXITCODE -ne 0) { Fail "Luna 安装失败，请检查网络或 GitHub 访问" }
+    }
 } else {
     Info "正在从 GitHub 安装 Luna..."
     pipx install "git+$REPO"
+    if ($LASTEXITCODE -ne 0) { Fail "Luna 安装失败，请检查网络或 GitHub 访问" }
 }
 Ok "Luna 安装完成"
 
@@ -72,7 +78,11 @@ if (Test-Path $ConfigFile) {
     Warn "配置文件已存在，跳过：$ConfigFile"
 } else {
     Info "下载默认配置..."
-    Invoke-WebRequest -Uri $RawExample -OutFile $ConfigFile -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri $RawExample -OutFile $ConfigFile -UseBasicParsing
+    } catch {
+        Fail "下载配置文件失败，请检查网络或手动下载：$RawExample"
+    }
     Ok "配置文件已创建：$ConfigFile"
 }
 
