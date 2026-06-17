@@ -149,11 +149,19 @@ api:
 
 ### 安装
 
+**macOS / Linux**
+
 ```bash
 curl -sSL https://raw.githubusercontent.com/optimesPrime/code-review-luna/main/install.sh | bash
 ```
 
-需要 Python 3.11+。脚本会自动安装 pipx、拉取 Luna 并生成配置文件 `~/.luna/config.yaml`。
+**Windows（PowerShell）**
+
+```powershell
+irm https://raw.githubusercontent.com/optimesPrime/code-review-luna/main/install.ps1 | iex
+```
+
+需要 Python 3.11+。脚本会自动安装 pipx、拉取 Luna 并生成配置文件（macOS/Linux：`~/.luna/config.yaml`，Windows：`$HOME/.luna/config.yaml`）。
 
 ### 配置
 
